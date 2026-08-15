@@ -110,3 +110,12 @@ export interface RepoDetail {
   failedCheck?: FailedCheckDetail | null;
 }
 
+export interface NotificationSettings {
+  /** Whether Slack notifications are active */
+  enabled: boolean;
+  /** True when a Slack webhook URL has been saved (URL itself is never returned) */
+  slackWebhookConfigured: boolean;
+  /** @nullable */
+  updatedAt?: string | null;
+}
+

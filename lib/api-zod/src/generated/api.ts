@@ -69,3 +69,14 @@ export const GetRepoDetailResponse = zod.object({
 })
 
 
+/**
+ * Read-only. Returns whether Slack notifications are enabled and whether a webhook URL is configured. The URL itself is never returned — it is set via the SLACK_WEBHOOK_URL environment variable (Replit Secrets).
+ * @summary Get notification settings
+ */
+export const GetNotificationSettingsResponse = zod.object({
+  "enabled": zod.boolean().describe('Whether Slack notifications are active'),
+  "slackWebhookConfigured": zod.boolean().describe('True when a Slack webhook URL has been saved (URL itself is never returned)'),
+  "updatedAt": zod.coerce.date().nullish()
+})
+
+

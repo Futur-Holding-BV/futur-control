@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: repos
     description: Read-only GitHub repository status
+  - name: notifications
+    description: Notification settings
 paths:
   /healthz:
     get:
@@ -78,6 +80,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorMessage"
+  /notifications/settings:
+    get:
+      operationId: getNotificationSettings
+      tags: [notifications]
+      summary: Get notification settings
+      description: >
+        Read-only. Returns whether Slack notifications are enabled and whether
+        a webhook URL is configured. The URL itself is never returned — it is
+        set via the SLACK_WEBHOOK_URL environment variable (Replit Secrets).
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
 components:
   schemas:
     HealthStatus:
@@ -190,3 +208,16 @@ components:
           oneOf:
             - $ref: "#/components/schemas/FailedCheckDetail"
             - type: "null"
+    NotificationSettings:
+      type: object
+      required: [enabled, slackWebhookConfigured]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether Slack notifications are active
+        slackWebhookConfigured:
+          type: boolean
+          description: True when a Slack webhook URL has been saved (URL itself is never returned)
+        updatedAt:
+          type: ["string", "null"]
+          format: date-time

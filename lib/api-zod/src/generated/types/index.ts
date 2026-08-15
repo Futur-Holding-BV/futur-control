@@ -12,6 +12,7 @@ export * from './checkRun';
 export * from './checkRunStatus';
 export * from './failedCheckDetail';
 export * from './healthStatus';
+export * from './notificationSettings';
 export * from './repoDetail';
 export * from './repoDetailStatus';
 export * from './repoSummary';

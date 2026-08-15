@@ -3,10 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ShieldCheck } from "lucide-react";
+import { Bell, ShieldCheck } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import RepoDetail from "@/pages/repo";
+import NotificationsPage from "@/pages/notifications";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,7 +21,7 @@ const queryClient = new QueryClient({
 function Header() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-xl">
-      <div className="container mx-auto max-w-4xl flex h-16 items-center px-4">
+      <div className="container mx-auto max-w-4xl flex h-16 items-center justify-between px-4">
         <Link href="/" className="flex items-center gap-3 transition-opacity hover:opacity-80">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20">
             <ShieldCheck className="h-5 w-5" />
@@ -29,6 +30,13 @@ function Header() {
             <span className="text-sm font-semibold leading-none text-foreground tracking-tight">FPS-Beheercentrum</span>
             <span className="text-[10px] uppercase font-medium tracking-widest text-muted-foreground mt-1">Systeemstatus</span>
           </div>
+        </Link>
+        <Link
+          href="/notifications"
+          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Bell className="h-4 w-4" />
+          <span className="hidden sm:inline">Meldingen</span>
         </Link>
       </div>
     </header>
@@ -44,6 +52,7 @@ function Router() {
           <Switch>
             <Route path="/" component={Home} />
             <Route path="/repo/:name" component={RepoDetail} />
+            <Route path="/notifications" component={NotificationsPage} />
             <Route component={NotFound} />
           </Switch>
         </RoutedErrorBoundary>
