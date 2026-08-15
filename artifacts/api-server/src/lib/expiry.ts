@@ -74,6 +74,19 @@ function unknown(
   };
 }
 
+function redAlert(
+  base: Omit<ExpiryItem, "expiresAt" | "daysLeft" | "severity" | "unknownReason">,
+  reason: string,
+): ExpiryItem {
+  return {
+    ...base,
+    expiresAt: null,
+    daysLeft: null,
+    severity: "red",
+    unknownReason: reason,
+  };
+}
+
 // ── GitHub tokens ────────────────────────────────────────────────────────────
 
 /**
@@ -183,6 +196,13 @@ async function tlsItems(): Promise<ExpiryItem[]> {
       try {
         return known(base, await tlsCertExpiry(host ?? entry, port));
       } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ERR_TLS_CERT_ALTNAME_INVALID") {
+          return redAlert(
+            base,
+            "Het certificaat is uitgegeven voor een andere domeinnaam — bezoekers krijgen nu al een beveiligingswaarschuwing.",
+          );
+        }
         return unknown(
           base,
           `certificaat kon niet worden uitgelezen (${err instanceof Error ? err.message : "onbekende fout"})`,
