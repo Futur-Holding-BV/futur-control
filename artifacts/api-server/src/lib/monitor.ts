@@ -129,7 +129,8 @@ async function saveSnapshot(
 // Per-repo check
 // ---------------------------------------------------------------------------
 
-async function checkRepo(repoName: string): Promise<void> {
+/** Exported for unit-testing only. */
+export async function checkRepo(repoName: string): Promise<void> {
   // 1. Fetch live status from GitHub.
   let summary;
   try {
