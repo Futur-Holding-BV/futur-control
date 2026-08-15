@@ -221,76 +221,6 @@ describe("pollAll — anomaly notification", () => {
     const saved = savedSnapshot(0);
     expect(saved["notifiedAnomalySha"]).toBeNull();
   });
-});
-
-// ---------------------------------------------------------------------------
-// Tests: pollAll — anomaly notification
-// ---------------------------------------------------------------------------
-
-describe("pollAll — anomaly notification", () => {
-  beforeEach(() => {
-    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
-    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
-    vi.mocked(notifyRepoRed).mockResolvedValue(true);
-    vi.mocked(notifyAnomaly).mockResolvedValue(true);
-  });
-
-  afterEach(() => {
-    vi.resetAllMocks();
-  });
-
-  it("notifies when a new anomaly is detected (SHA not yet notified)", async () => {
-    mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
-    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
-
-    await pollAll();
-
-    expect(notifyAnomaly).toHaveBeenCalledOnce();
-    expect(notifyAnomaly).toHaveBeenCalledWith(
-      repoName,
-      exampleAnomaly,
-      expect.any(String),
-    );
-  });
-
-  it("does NOT re-notify for an anomaly whose SHA was already notified", async () => {
-    mockSnapshot({
-      status: "green",
-      notifiedStatus: "green",
-      notifiedAnomalySha: exampleAnomaly.commitSha,
-    });
-    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
-
-    await pollAll();
-
-    expect(notifyAnomaly).not.toHaveBeenCalled();
-  });
-
-  it("notifies for a new anomaly SHA even when a previous SHA was already notified", async () => {
-    mockSnapshot({
-      status: "green",
-      notifiedStatus: "green",
-      notifiedAnomalySha: "old-sha",
-    });
-    vi.mocked(repoSummary).mockResolvedValue(
-      makeSummary({ anomaly: { ...exampleAnomaly, commitSha: "new-sha" } }),
-    );
-
-    await pollAll();
-
-    expect(notifyAnomaly).toHaveBeenCalledOnce();
-  });
-
-  it("does NOT advance notifiedAnomalySha when delivery fails", async () => {
-    mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
-    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
-    vi.mocked(notifyAnomaly).mockResolvedValue(false);
-
-    await pollAll();
-
-    const saved = savedSnapshot(0);
-    expect(saved["notifiedAnomalySha"]).toBeNull();
-  });
 
   it("does not call notifyAnomaly when no anomaly is present", async () => {
     mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
@@ -320,5 +250,160 @@ describe("pollAll — GitHub error handling", () => {
 
     await expect(pollAll()).resolves.toBeUndefined();
     expect(notifyRepoRed).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: pollAll — every monitored repo is checked in one cycle
+// ---------------------------------------------------------------------------
+
+describe("pollAll — full repo coverage", () => {
+  const repos = ["repo-alpha", "repo-beta", "repo-gamma"];
+
+  beforeEach(() => {
+    vi.mocked(listMonitoredRepos).mockResolvedValue(repos);
+    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(notifyAnomaly).mockResolvedValue(true);
+
+    // Each repo returns a green summary; snapshot returns null (first poll).
+    vi.mocked(repoSummary).mockImplementation(async (name) =>
+      makeSummary({ name, status: "green" }),
+    );
+
+    const selectMock = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([]),
+    };
+    vi.mocked(db.select).mockReturnValue(
+      selectMock as unknown as ReturnType<typeof db.select>,
+    );
+
+    const insertMock = {
+      values: vi.fn().mockReturnThis(),
+      onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(db.insert).mockReturnValue(
+      insertMock as unknown as ReturnType<typeof db.insert>,
+    );
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("calls repoSummary exactly once for every monitored repo", async () => {
+    await pollAll();
+
+    expect(repoSummary).toHaveBeenCalledTimes(repos.length);
+    for (const r of repos) {
+      expect(repoSummary).toHaveBeenCalledWith(r);
+    }
+  });
+
+  it("persists a snapshot for every monitored repo", async () => {
+    await pollAll();
+
+    // One db.insert per repo.
+    expect(db.insert).toHaveBeenCalledTimes(repos.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: pollAll — DB write failure in saveSnapshot is swallowed
+// ---------------------------------------------------------------------------
+
+describe("pollAll — saveSnapshot failure handling", () => {
+  beforeEach(() => {
+    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "green" }));
+    vi.mocked(notifyAnomaly).mockResolvedValue(true);
+
+    const selectMock = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([]),
+    };
+    vi.mocked(db.select).mockReturnValue(
+      selectMock as unknown as ReturnType<typeof db.select>,
+    );
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("resolves without throwing when db.insert rejects", async () => {
+    // Simulate a database write failure inside saveSnapshot.
+    const insertMock = {
+      values: vi.fn().mockReturnThis(),
+      onConflictDoUpdate: vi.fn().mockRejectedValue(new Error("DB write failed")),
+    };
+    vi.mocked(db.insert).mockReturnValue(
+      insertMock as unknown as ReturnType<typeof db.insert>,
+    );
+
+    await expect(pollAll()).resolves.toBeUndefined();
+  });
+
+  it("still attempts the snapshot write even when a notification was delivered", async () => {
+    // Repo is green → red transition so a notification will be sent.
+    mockSnapshot({ status: "red", notifiedStatus: "green", notifiedAnomalySha: null });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red" }));
+    vi.mocked(notifyRepoRed).mockResolvedValue(true);
+
+    const insertMock = {
+      values: vi.fn().mockReturnThis(),
+      onConflictDoUpdate: vi.fn().mockRejectedValue(new Error("DB write failed")),
+    };
+    vi.mocked(db.insert).mockReturnValue(
+      insertMock as unknown as ReturnType<typeof db.insert>,
+    );
+
+    // Must not throw even though saveSnapshot will catch and swallow the error.
+    await expect(pollAll()).resolves.toBeUndefined();
+    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: pollAll — advisory lock not acquired → no repos checked
+// ---------------------------------------------------------------------------
+
+describe("pollAll — advisory lock not acquired", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+    // Restore the default lock behaviour for subsequent tests.
+    lockClient.query.mockImplementation(async (text: string) => {
+      if (text.includes("pg_try_advisory_lock")) return { rows: [{ acquired: true }] };
+      return { rows: [] };
+    });
+  });
+
+  it("does not check any repos when the advisory lock is held by another instance", async () => {
+    // Simulate another instance holding the lock.
+    lockClient.query.mockImplementation(async (text: string) => {
+      if (text.includes("pg_try_advisory_lock")) return { rows: [{ acquired: false }] };
+      return { rows: [] };
+    });
+
+    await pollAll();
+
+    expect(listMonitoredRepos).not.toHaveBeenCalled();
+    expect(repoSummary).not.toHaveBeenCalled();
+  });
+
+  it("does not send any notifications when the lock is not acquired", async () => {
+    lockClient.query.mockImplementation(async (text: string) => {
+      if (text.includes("pg_try_advisory_lock")) return { rows: [{ acquired: false }] };
+      return { rows: [] };
+    });
+
+    await pollAll();
+
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(notifyAnomaly).not.toHaveBeenCalled();
   });
 });
