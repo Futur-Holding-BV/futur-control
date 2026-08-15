@@ -25,6 +25,8 @@ export interface ExpiryItem {
   severity: ExpirySeverity;
   consequence: string;
   unknownReason: string | null;
+  /** Set when the expiry date comes from a cached previous reading (RDAP temporarily unavailable) */
+  staleNote: string | null;
 }
 
 const CACHE_TTL_MS = 30 * 60 * 1000;
@@ -44,8 +46,9 @@ function daysLeft(expiresAt: Date): number {
 }
 
 function known(
-  base: Omit<ExpiryItem, "expiresAt" | "daysLeft" | "severity" | "unknownReason">,
+  base: Omit<ExpiryItem, "expiresAt" | "daysLeft" | "severity" | "unknownReason" | "staleNote">,
   expiresAt: Date,
+  staleNote: string | null = null,
 ): ExpiryItem {
   return {
     ...base,
@@ -53,11 +56,12 @@ function known(
     daysLeft: daysLeft(expiresAt),
     severity: severityFor(expiresAt),
     unknownReason: null,
+    staleNote,
   };
 }
 
 function unknown(
-  base: Omit<ExpiryItem, "expiresAt" | "daysLeft" | "severity" | "unknownReason">,
+  base: Omit<ExpiryItem, "expiresAt" | "daysLeft" | "severity" | "unknownReason" | "staleNote">,
   reason: string,
 ): ExpiryItem {
   return {
@@ -66,6 +70,7 @@ function unknown(
     daysLeft: null,
     severity: "unknown",
     unknownReason: reason,
+    staleNote: null,
   };
 }
 
@@ -248,13 +253,23 @@ async function azureItem(): Promise<ExpiryItem> {
   }
 }
 
-// ── Domain renewals via RDAP ─────────────────────────────────────────────────
-
+/** Per-domain last-known expiry date, kept in memory across cache refreshes. */
+interface DomainLastKnown {
+  date: Date;
+  fetchedAt: number; // ms timestamp
+}
 async function domainExpiry(domain: string): Promise<Date | null> {
   const res = await fetch(`https://rdap.org/domain/${encodeURIComponent(domain)}`, {
     headers: { Accept: "application/rdap+json" },
     redirect: "follow",
   });
+  if (res.status === 429) {
+    const retryAfterHeader = res.headers.get("Retry-After");
+    const backoffMs = retryAfterHeader
+      ? (Number(retryAfterHeader) * 1000 || RDAP_DEFAULT_BACKOFF_MS)
+      : RDAP_DEFAULT_BACKOFF_MS;
+    throw new RdapRateLimitError(backoffMs);
+  }
   if (!res.ok) throw new Error(`RDAP status ${res.status}`);
   const data = (await res.json()) as {
     events?: Array<{ eventAction: string; eventDate: string }>;
@@ -265,6 +280,22 @@ async function domainExpiry(domain: string): Promise<Date | null> {
   return isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * Returns a known item from the last-known cache (with a stale note) when the
+ * cache is fresh enough, or an unknown item otherwise.
+ */
+function staleOrUnknown(
+  base: Parameters<typeof unknown>[0],
+  domain: string,
+  reason: string,
+): ExpiryItem {
+  const cached = domainLastKnown.get(domain);
+  if (cached && Date.now() - cached.fetchedAt <= RDAP_STALE_MAX_MS) {
+    const fetchedDate = new Date(cached.fetchedAt).toLocaleDateString("nl-NL");
+    return known(base, cached.date, `op basis van meting van ${fetchedDate} — ${reason}`);
+  }
+  return unknown(base, reason);
+}
 async function domainItems(): Promise<ExpiryItem[]> {
   const domainsEnv = process.env.EXPIRY_DOMAINS;
   const consequence =
@@ -284,43 +315,73 @@ async function domainItems(): Promise<ExpiryItem[]> {
   }
   const domains = domainsEnv.split(",").map((d) => d.trim()).filter(Boolean);
   const manual = parseManualExpiries();
-  return Promise.all(
-    domains.map(async (domain) => {
-      const base = {
-        id: `domain:${domain}`,
-        label: `Domein ${domain}`,
-        category: "domain" as const,
-        consequence,
-      };
 
-      // Manually maintained date (e.g. .nl domains: SIDN publishes no expiry
-      // via RDAP). Never queried at the registry; the date comes from the
-      // EXPIRY_MANUAL secret and is clearly marked as manually entered.
-      const manualDate = manual.get(domain.toLowerCase());
-      if (manualDate) {
-        return known({ ...base, label: `Domein ${domain} (handmatig ingevoerd)` }, manualDate);
-      }
-      if (domain.toLowerCase().endsWith(".nl")) {
-        return unknown(
+  // Process domains sequentially with a small delay to avoid hammering RDAP.
+  const results: ExpiryItem[] = [];
+  for (let i = 0; i < domains.length; i++) {
+    if (i > 0) await sleep(RDAP_REQUEST_DELAY_MS);
+    const domain = domains[i];
+    const base = {
+      id: `domain:${domain}`,
+      label: `Domein ${domain}`,
+      category: "domain" as const,
+      consequence,
+    };
+
+    // Manually maintained date (e.g. .nl domains: SIDN publishes no expiry
+    // via RDAP). Never queried at the registry; the date comes from the
+    // EXPIRY_MANUAL secret and is clearly marked as manually entered.
+    const manualDate = manual.get(domain.toLowerCase());
+    if (manualDate) {
+      results.push(known({ ...base, label: `Domein ${domain} (handmatig ingevoerd)` }, manualDate));
+      continue;
+    }
+    if (domain.toLowerCase().endsWith(".nl")) {
+      results.push(
+        unknown(
           base,
           "het .nl-register (SIDN) publiceert geen verloopdatum — zet de datum handmatig in het geheim EXPIRY_MANUAL, bijvoorbeeld: " +
             `${domain}=2027-06-14`,
-        );
-      }
+        ),
+      );
+      continue;
+    }
 
-      try {
-        const date = await domainExpiry(domain);
-        if (!date)
-          return unknown(base, "het domeinregister publiceert geen verloopdatum voor deze extensie");
-        return known(base, date);
-      } catch (err) {
-        return unknown(
-          base,
-          `verloopdatum kon niet worden opgevraagd (${err instanceof Error ? err.message : "onbekende fout"})`,
+    // Skip if currently in back-off window (previous 429).
+    const backoffUntil = rdapBackoffUntil.get(domain) ?? 0;
+    if (Date.now() < backoffUntil) {
+      results.push(
+        staleOrUnknown(base, domain, "het domeinregister is tijdelijk overbelast; verzoeken worden even overgeslagen"),
+      );
+      continue;
+    }
+
+    try {
+      const date = await domainExpiry(domain);
+      if (!date) {
+        results.push(unknown(base, "het domeinregister publiceert geen verloopdatum voor deze extensie"));
+      } else {
+        domainLastKnown.set(domain, { date, fetchedAt: Date.now() });
+        results.push(known(base, date));
+      }
+    } catch (err) {
+      if (err instanceof RdapRateLimitError) {
+        rdapBackoffUntil.set(domain, Date.now() + err.backoffMs);
+        logger.warn({ domain, backoffMs: err.backoffMs }, "RDAP 429 — domein tijdelijk overgeslagen");
+        results.push(staleOrUnknown(base, domain, "het domeinregister vraagt om minder verzoeken (429)"));
+      } else {
+        logger.warn({ err, domain }, "RDAP-verzoek mislukt");
+        results.push(
+          staleOrUnknown(
+            base,
+            domain,
+            `verloopdatum kon niet worden opgevraagd (${err instanceof Error ? err.message : "onbekende fout"})`,
+          ),
         );
       }
-    }),
-  );
+    }
+  }
+  return results;
 }
 
 /**
@@ -380,3 +441,28 @@ export async function listExpiryItems(bypassCache = false): Promise<ExpiryItem[]
   cached = { items, expiresAt: Date.now() + CACHE_TTL_MS };
   return items;
 }
+
+/**
+ * Per-domain 429 back-off: value is the timestamp (ms) until which RDAP
+ * requests for that domain should be skipped.
+ */
+const rdapBackoffUntil = new Map<string, number>();
+
+class RdapRateLimitError extends Error {
+  constructor(public readonly backoffMs: number) {
+    super(`RDAP rate-limited; retry after ${backoffMs / 1000}s`);
+  }
+}
+
+const domainLastKnown = new Map<string, DomainLastKnown>();
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Default back-off when RDAP returns 429 without a Retry-After header. */
+const RDAP_DEFAULT_BACKOFF_MS = 60 * 60 * 1000; // 1 hour
+
+/** Maximum age of a cached domain date before it is considered too stale to show. */
+const RDAP_STALE_MAX_MS = 7 * DAY_MS;
+
+/** Delay between sequential RDAP requests to avoid hammering the registry. */
+const RDAP_REQUEST_DELAY_MS = 500;

@@ -131,6 +131,9 @@ export default function Home() {
                           <div className="text-xs font-normal opacity-80 mt-0.5">
                             {item.expiresAt ? new Date(item.expiresAt).toLocaleDateString('nl-NL') : ''}
                           </div>
+                          {item.staleNote && (
+                            <div className="text-xs font-normal opacity-70 mt-0.5 italic">{item.staleNote}</div>
+                          )}
                         </div>
                       )}
                     </div>

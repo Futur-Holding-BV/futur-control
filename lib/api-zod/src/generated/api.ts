@@ -97,7 +97,8 @@ export const ListExpiryItemsResponseItem = zod.object({
   "daysLeft": zod.number().nullish().describe('Whole days until expiry (negative when already expired)'),
   "severity": zod.enum(['red', 'orange', 'ok', 'unknown']).describe('red = expires within 7 days, orange = within 30 days, ok = later, unknown = could not be read'),
   "consequence": zod.string().describe('Plain-language description of what breaks when this expires'),
-  "unknownReason": zod.string().nullish().describe('Why the expiry could not be read (only when severity is unknown)')
+  "unknownReason": zod.string().nullish().describe('Why the expiry could not be read (only when severity is unknown)'),
+  "staleNote": zod.string().nullish().describe('Set when the expiry date comes from a cached previous reading because RDAP was temporarily unavailable')
 })
 export const ListExpiryItemsResponse = zod.array(ListExpiryItemsResponseItem)
 

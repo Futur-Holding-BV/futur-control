@@ -49,6 +49,11 @@ export interface ExpiryItem {
      * @nullable
      */
   unknownReason?: string | null;
+  /**
+   * Set when the expiry date comes from a cached previous reading because RDAP was temporarily unavailable
+   * @nullable
+   */
+  staleNote?: string | null;
 }
 
 export interface ActionLogEntry {

@@ -214,6 +214,9 @@ components:
         unknownReason:
           type: ["string", "null"]
           description: Why the expiry could not be read (only when severity is unknown)
+        staleNote:
+          type: ["string", "null"]
+          description: Set when the expiry date comes from a cached previous reading because RDAP was temporarily unavailable
     ActionLogEntry:
       type: object
       required: [id, action, reason, outcome, createdAt]
