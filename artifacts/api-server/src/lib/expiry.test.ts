@@ -191,6 +191,68 @@ describe("domeinverloopdatum — stale fallback na netwerkfout", () => {
   });
 });
 
+describe(".nl-domein — handmatig invoer (EXPIRY_MANUAL)", () => {
+  const NL_DOMAIN = "voorbeeld.nl";
+  let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
+
+  beforeAll(async () => {
+    // Isolate env but override EXPIRY_DOMAINS to a .nl domain.
+    isolateEnv();
+    process.env.EXPIRY_DOMAINS = NL_DOMAIN;
+    ({ listExpiryItems } = await freshExpiry());
+  });
+  afterAll(() => {
+    delete process.env.EXPIRY_MANUAL;
+    restoreEnv();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("geeft severity unknown als het .nl-domein niet in EXPIRY_MANUAL staat", async () => {
+    delete process.env.EXPIRY_MANUAL;
+    // Fetch should never be called for RDAP — the .nl branch short-circuits.
+    const spy = stubFetch(() => { throw new Error("should not be called for .nl"); });
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${NL_DOMAIN}`);
+
+    // No RDAP call expected.
+    const rdapCalls = spy.mock.calls.filter(([input]) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      return url.includes("rdap.org");
+    });
+    expect(rdapCalls).toHaveLength(0);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).toBe("unknown");
+    expect(domain!.expiresAt).toBeNull();
+    expect(domain!.staleNote).toBeNull();
+    // The instructive message must mention EXPIRY_MANUAL so the operator knows what to do.
+    expect(domain!.unknownReason).toMatch(/EXPIRY_MANUAL/);
+  });
+
+  it("geeft een bekende datum als het .nl-domein wél in EXPIRY_MANUAL staat", async () => {
+    process.env.EXPIRY_MANUAL = `${NL_DOMAIN}=2030-06-14`;
+    const spy = stubFetch(() => { throw new Error("should not be called for .nl"); });
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${NL_DOMAIN}`);
+
+    // No RDAP call expected.
+    const rdapCalls = spy.mock.calls.filter(([input]) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      return url.includes("rdap.org");
+    });
+    expect(rdapCalls).toHaveLength(0);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).not.toBe("unknown");
+    expect(domain!.expiresAt).toBeTruthy();
+    expect(domain!.staleNote).toBeNull();
+    // Label must indicate the date was entered manually.
+    expect(domain!.label).toMatch(/handmatig/i);
+  });
+});
+
 describe("domeinverloopdatum — cache ouder dan 7 dagen", () => {
   let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
 
