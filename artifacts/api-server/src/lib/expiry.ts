@@ -192,6 +192,7 @@ async function tlsItems(): Promise<ExpiryItem[]> {
         category: "tls_certificate" as const,
         consequence:
           "Bezoekers krijgen dan een beveiligingswaarschuwing en de omgeving is onbereikbaar.",
+        staleNote: null,
       };
       try {
         return known(base, await tlsCertExpiry(host ?? entry, port));
