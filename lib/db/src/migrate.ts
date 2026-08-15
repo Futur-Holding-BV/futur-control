@@ -84,6 +84,17 @@ export async function ensureTablesExist(): Promise<void> {
         fetched_at TIMESTAMPTZ NOT NULL
       )
     `);
+
+    // ── login_attempts ──────────────────────────────────────────────────────
+    // Persistent brute-force counter so login blocks survive server restarts.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        ip            TEXT PRIMARY KEY,
+        count         INTEGER NOT NULL DEFAULT 0,
+        window_start  TIMESTAMPTZ NOT NULL,
+        blocked_until TIMESTAMPTZ
+      )
+    `);
   } finally {
     client.release();
   }

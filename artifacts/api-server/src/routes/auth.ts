@@ -13,7 +13,7 @@ import {
 
 const router: IRouter = Router();
 
-router.post("/auth/login", (req, res) => {
+router.post("/auth/login", async (req, res) => {
   if (!adminPassword() || !process.env.SESSION_SECRET) {
     res.status(503).json({
       error:
@@ -24,7 +24,7 @@ router.post("/auth/login", (req, res) => {
 
   // Brute-force check
   const ip = req.ip ?? "unknown";
-  const blockedMs = loginBlockedMs(ip);
+  const blockedMs = await loginBlockedMs(ip);
   if (blockedMs > 0) {
     const secLeft = Math.ceil(blockedMs / 1000);
     res.status(429).json({
@@ -35,7 +35,7 @@ router.post("/auth/login", (req, res) => {
 
   const password = typeof req.body?.password === "string" ? req.body.password : "";
   if (!passwordMatches(password)) {
-    const nowBlockedMs = recordFailedLogin(ip);
+    const nowBlockedMs = await recordFailedLogin(ip);
     if (nowBlockedMs > 0) {
       const secLeft = Math.ceil(nowBlockedMs / 1000);
       res.status(429).json({
@@ -47,7 +47,7 @@ router.post("/auth/login", (req, res) => {
     return;
   }
 
-  resetLoginCounter(ip);
+  await resetLoginCounter(ip);
   const token = createSessionToken();
   if (!token) {
     res.status(503).json({ error: "De inlog is nog niet ingericht (SESSION_SECRET ontbreekt)." });

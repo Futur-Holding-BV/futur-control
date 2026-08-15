@@ -6,6 +6,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { startMonitor } from "./lib/monitor";
 import { ensureTablesExist } from "@workspace/db";
+import { cleanupExpiredLoginAttempts } from "./lib/auth";
 
 const app: Express = express();
 
@@ -39,6 +40,12 @@ ensureTablesExist()
   .then(() => {
     logger.info("Databaseschema geverifieerd");
     startMonitor();
+    // Periodically purge expired login-attempt rows (every 10 minutes).
+    setInterval(() => {
+      cleanupExpiredLoginAttempts().catch((err: unknown) => {
+        logger.warn({ err }, "Periodieke login-opschoning mislukt");
+      });
+    }, 10 * 60 * 1000).unref();
   })
   .catch((err: unknown) => {
     logger.error({ err }, "Startmigratie mislukt — achtergrondmonitor niet gestart");
