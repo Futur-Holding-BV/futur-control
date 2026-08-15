@@ -27,8 +27,8 @@
 
 import { pool, db, repoStatusSnapshots } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
-import { listMonitoredRepos, repoSummary, type Status, type Anomaly } from "./github.js";
-import { notifyRepoRed, notifyAnomaly } from "./notifications.js";
+import { listMonitoredRepos, repoSummary, type Status, type Anomaly, type RepoSummary } from "./github.js";
+import { notifyRepoRed, notifyMultipleReposRed, notifyAnomaly } from "./notifications.js";
 import { maybeAutoRetry, settleRecovery } from "./selfheal.js";
 import { logger } from "./logger.js";
 
@@ -126,32 +126,46 @@ async function saveSnapshot(
 }
 
 // ---------------------------------------------------------------------------
-// Per-repo check
+// Per-repo data gathering (no notifications sent here)
 // ---------------------------------------------------------------------------
 
-/** Exported for unit-testing only. */
-export async function checkRepo(repoName: string): Promise<void> {
-  // 1. Fetch live status from GitHub.
-  let summary;
+interface RepoCheckData {
+  repoName: string;
+  summary: RepoSummary;
+  notifiedStatus: string;
+  notifiedAnomalySha: string | null;
+  /**
+   * True when this repo transitions to red and has not yet been notified,
+   * AND no automatic retry was started (selfheal).  When a retry is started,
+   * we hold back the notification until the next poll.
+   */
+  isNewRed: boolean;
+  /** Anomaly that hasn't been notified yet, or null. */
+  newAnomaly: Anomaly | null;
+}
+
+/**
+ * Fetches the live status for one repo and compares it with the stored
+ * snapshot. Returns a data object that pollAll uses to decide how to notify.
+ * Does NOT send any Slack messages.
+ *
+ * Exported for unit-testing only.
+ */
+export async function gatherRepoData(repoName: string): Promise<RepoCheckData | null> {
+  let summary: RepoSummary;
   try {
     summary = await repoSummary(repoName);
   } catch (err) {
     logger.warn({ err, repo: repoName }, "Statuscontrole overgeslagen");
-    return;
+    return null;
   }
 
-  // 2. Read the last persisted state.
   const snapshot = await loadSnapshot(repoName);
   const notifiedStatus = snapshot?.notifiedStatus ?? "gray";
   const notifiedAnomalySha = snapshot?.notifiedAnomalySha ?? null;
 
-  // These track what we'll persist after (possibly) sending notifications.
-  let newNotifiedStatus = notifiedStatus;
-  let newNotifiedAnomalySha = notifiedAnomalySha;
-
-  // 3. Green → red transition?  Only notify if the LAST NOTIFIED status was
-  //    not already red (prevents re-alerting on a stable red repo).
-  if (summary.status === "red" && notifiedStatus !== "red") {
+  let isNewRed = summary.status === "red" && notifiedStatus !== "red";
+  if (isNewRed) {
     logger.info({ repo: repoName, notifiedStatus }, "Statusovergang naar rood gedetecteerd");
 
     // Self-heal: when the failure looks like a temporary hiccup, retry the
@@ -159,45 +173,19 @@ export async function checkRepo(repoName: string): Promise<void> {
     // retry has concluded. If the retry fails, the repo stays red on the
     // next poll and the notification goes out then.
     const retryStarted = await maybeAutoRetry(repoName);
-    if (!retryStarted) {
-      // Attempt Slack delivery FIRST.  The fetch has a bounded timeout so it
-      // cannot stall the advisory lock indefinitely.
-      const delivered = await notifyRepoRed(summary);
-      if (delivered) {
-        newNotifiedStatus = "red";
-      }
-      // If delivery failed: newNotifiedStatus stays at its old value.
-      // Next poll will detect the same red transition and retry.
+    if (retryStarted) {
+      isNewRed = false;
     }
-  } else if (summary.status === "green" && notifiedStatus === "red") {
-    // Confirmed recovery (green only): reset so the next red→green→red cycle
-    // produces a fresh alert.
-    // We deliberately do NOT reset on gray (unknown / workflow in-progress)
-    // because gray is not a recovery — resetting on gray would cause a
-    // duplicate alert on the subsequent red poll when the workflow completes.
-    newNotifiedStatus = "green";
   }
 
-  // Settle a pending automatic retry: when the repo is green thanks to a
-  // retried run, mark the log entry "hersteld na herhaling".
-  if (summary.status === "green") {
-    await settleRecovery(repoName);
+  const anomaly = summary.anomaly ?? null;
+  const newAnomaly =
+    anomaly && anomaly.commitSha !== notifiedAnomalySha ? anomaly : null;
+  if (newAnomaly) {
+    logger.info({ repo: repoName, sha: newAnomaly.commitSha }, "Nieuwe afwijking gedetecteerd");
   }
 
-  // 4. New anomaly?
-  const anomaly = summary.anomaly;
-  if (anomaly && anomaly.commitSha !== notifiedAnomalySha) {
-    logger.info({ repo: repoName, sha: anomaly.commitSha }, "Nieuwe afwijking gedetecteerd");
-    const delivered = await notifyAnomaly(repoName, anomaly, summary.htmlUrl);
-    if (delivered) {
-      newNotifiedAnomalySha = anomaly.commitSha;
-    }
-    // If delivery failed: notifiedAnomalySha is not advanced → retry next poll.
-  }
-
-  // 5. Persist: always save the observed status; notification state only
-  //    advances when Slack delivery succeeded above.
-  await saveSnapshot(repoName, summary.status, newNotifiedStatus, newNotifiedAnomalySha);
+  return { repoName, summary, notifiedStatus, notifiedAnomalySha, isNewRed, newAnomaly };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,10 +205,67 @@ async function pollAll(): Promise<void> {
     lockClient = client;
 
     logger.debug("Monitor: start controle van alle repositories");
-    const repos = await listMonitoredRepos();
-    for (const repo of repos) {
-      await checkRepo(repo);
+
+    // 1. Gather data for all repos (no Slack calls yet).
+    const monitoredRepos = await listMonitoredRepos();
+    const results: RepoCheckData[] = [];
+    for (const repo of monitoredRepos) {
+      const data = await gatherRepoData(repo);
+      if (data) results.push(data);
     }
+
+    // 2. Decide how to notify for red transitions.
+    //    ≥2 new red repos → one bundled summary message.
+    //    1 new red repo  → individual message (existing behaviour).
+    const newRedRepos = results.filter((r) => r.isNewRed);
+
+    // Track which repos had their red notification successfully delivered.
+    const redDelivered = new Set<string>();
+
+    if (newRedRepos.length >= 2) {
+      const summaries = newRedRepos.map((r) => r.summary);
+      const delivered = await notifyMultipleReposRed(summaries);
+      if (delivered) {
+        for (const r of newRedRepos) redDelivered.add(r.repoName);
+      }
+    } else if (newRedRepos.length === 1) {
+      const r = newRedRepos[0]!;
+      const delivered = await notifyRepoRed(r.summary);
+      if (delivered) redDelivered.add(r.repoName);
+    }
+
+    // 3. Send anomaly notifications, settle recoveries, and persist snapshots.
+    for (const data of results) {
+      const { repoName, summary, notifiedStatus, notifiedAnomalySha } = data;
+
+      // Determine new notified-status to persist.
+      let newNotifiedStatus = notifiedStatus;
+      if (data.isNewRed && redDelivered.has(repoName)) {
+        newNotifiedStatus = "red";
+      } else if (summary.status === "green" && notifiedStatus === "red") {
+        // Confirmed recovery: reset so the next red→green→red cycle alerts again.
+        // We deliberately do NOT reset on gray (not a recovery).
+        newNotifiedStatus = "green";
+      }
+
+      // Settle a pending automatic retry: when the repo is green thanks to a
+      // retried run, mark the log entry "hersteld na herhaling".
+      if (summary.status === "green") {
+        await settleRecovery(repoName);
+      }
+
+      // Anomaly notification (always per-repo).
+      let newNotifiedAnomalySha = notifiedAnomalySha;
+      if (data.newAnomaly) {
+        const delivered = await notifyAnomaly(repoName, data.newAnomaly, summary.htmlUrl);
+        if (delivered) {
+          newNotifiedAnomalySha = data.newAnomaly.commitSha;
+        }
+      }
+
+      await saveSnapshot(repoName, summary.status, newNotifiedStatus, newNotifiedAnomalySha);
+    }
+
     logger.debug("Monitor: controle afgerond");
   } catch (err) {
     logger.error({ err }, "Monitor: fout tijdens pollronde");

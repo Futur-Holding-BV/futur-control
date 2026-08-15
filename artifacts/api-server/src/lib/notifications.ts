@@ -103,6 +103,54 @@ async function post(
 // ---------------------------------------------------------------------------
 
 /**
+ * Notify Slack with a single summary message when multiple repositories
+ * transition to red in the same poll cycle.
+ * Returns true when the message was delivered; false on any failure.
+ */
+export async function notifyMultipleReposRed(
+  summaries: RepoSummary[],
+): Promise<boolean> {
+  if (!isEnabled()) return false;
+  const webhookUrl = resolveWebhookUrl();
+  if (!webhookUrl) return false;
+
+  const count = summaries.length;
+  const repoLines = summaries
+    .map((s) => {
+      const url = s.htmlUrl ?? `https://github.com/${s.name}`;
+      const reason = s.failReason ?? "Controle faalt";
+      return `• *<${url}|${s.name}>* — ${reason}`;
+    })
+    .join("\n");
+
+  const payload = {
+    text: `🔴 ${count} codebases zijn tegelijk rood geworden`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `🔴 *${count} codebases zijn tegelijk rood geworden*`,
+        },
+      },
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: repoLines },
+      },
+    ],
+  };
+
+  const delivered = await post(webhookUrl, payload);
+  if (delivered) {
+    logger.info(
+      { repos: summaries.map((s) => s.name) },
+      "Gebundelde rode-status melding verstuurd",
+    );
+  }
+  return delivered;
+}
+
+/**
  * Notify Slack that a repository transitioned from a passing state to red.
  * Returns true when the message was delivered; false on any failure.
  */
