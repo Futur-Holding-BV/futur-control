@@ -75,7 +75,7 @@ function unknown(
 }
 
 function redAlert(
-  base: Omit<ExpiryItem, "expiresAt" | "daysLeft" | "severity" | "unknownReason">,
+  base: Omit<ExpiryItem, "expiresAt" | "daysLeft" | "severity" | "unknownReason" | "staleNote">,
   reason: string,
 ): ExpiryItem {
   return {
@@ -84,6 +84,7 @@ function redAlert(
     daysLeft: null,
     severity: "red",
     unknownReason: reason,
+    staleNote: null,
   };
 }
 
@@ -279,6 +280,27 @@ interface DomainLastKnown {
   date: Date;
   fetchedAt: number; // ms timestamp
 }
+
+/**
+ * Persists a successful RDAP reading to the database so the stale fallback
+ * survives a server restart. Errors are silently swallowed — the in-memory
+ * cache is the authoritative source; the DB is a durability bonus only.
+ */
+async function persistDomainExpiry(domain: string, date: Date): Promise<void> {
+  try {
+    const { db, domainExpiryCache } = await import("@workspace/db");
+    const now = new Date();
+    await db
+      .insert(domainExpiryCache)
+      .values({ domain, expiresAt: date, fetchedAt: now })
+      .onConflictDoUpdate({
+        target: domainExpiryCache.domain,
+        set: { expiresAt: date, fetchedAt: now },
+      });
+  } catch {
+    // DB unavailable or not configured — silently skip.
+  }
+}
 async function domainExpiry(domain: string): Promise<Date | null> {
   const res = await fetch(`https://rdap.org/domain/${encodeURIComponent(domain)}`, {
     headers: { Accept: "application/rdap+json" },
@@ -304,16 +326,27 @@ async function domainExpiry(domain: string): Promise<Date | null> {
 /**
  * Returns a known item from the last-known cache (with a stale note) when the
  * cache is fresh enough, or an unknown item otherwise.
+ *
+ * Falls back to the database when the in-memory cache is empty (e.g. after a
+ * server restart). The DB row must still be within RDAP_STALE_MAX_MS.
  */
-function staleOrUnknown(
+async function staleOrUnknown(
   base: Parameters<typeof unknown>[0],
   domain: string,
   reason: string,
-): ExpiryItem {
-  const cached = domainLastKnown.get(domain);
-  if (cached && Date.now() - cached.fetchedAt <= RDAP_STALE_MAX_MS) {
-    const fetchedDate = new Date(cached.fetchedAt).toLocaleDateString("nl-NL");
-    return known(base, cached.date, `op basis van meting van ${fetchedDate} — ${reason}`);
+): Promise<ExpiryItem> {
+  const inMemory = domainLastKnown.get(domain);
+  if (inMemory && Date.now() - inMemory.fetchedAt <= RDAP_STALE_MAX_MS) {
+    const fetchedDate = new Date(inMemory.fetchedAt).toLocaleDateString("nl-NL");
+    return known(base, inMemory.date, `op basis van meting van ${fetchedDate} — ${reason}`);
+  }
+  // In-memory cache is empty or too old — try the database fallback.
+  const dbCached = await loadDomainExpiryFromDb(domain);
+  if (dbCached && Date.now() - dbCached.fetchedAt <= RDAP_STALE_MAX_MS) {
+    const fetchedDate = new Date(dbCached.fetchedAt).toLocaleDateString("nl-NL");
+    // Populate in-memory cache to avoid repeated DB round-trips.
+    domainLastKnown.set(domain, dbCached);
+    return known(base, dbCached.date, `op basis van meting van ${fetchedDate} — ${reason}`);
   }
   return unknown(base, reason);
 }
@@ -372,7 +405,7 @@ async function domainItems(): Promise<ExpiryItem[]> {
     const backoffUntil = rdapBackoffUntil.get(domain) ?? 0;
     if (Date.now() < backoffUntil) {
       results.push(
-        staleOrUnknown(base, domain, "het domeinregister is tijdelijk overbelast; verzoeken worden even overgeslagen"),
+        await staleOrUnknown(base, domain, "het domeinregister is tijdelijk overbelast; verzoeken worden even overgeslagen"),
       );
       continue;
     }
@@ -383,17 +416,19 @@ async function domainItems(): Promise<ExpiryItem[]> {
         results.push(unknown(base, "het domeinregister publiceert geen verloopdatum voor deze extensie"));
       } else {
         domainLastKnown.set(domain, { date, fetchedAt: Date.now() });
+        // Fire-and-forget: persist to DB so the stale fallback survives restarts.
+        void persistDomainExpiry(domain, date);
         results.push(known(base, date));
       }
     } catch (err) {
       if (err instanceof RdapRateLimitError) {
         rdapBackoffUntil.set(domain, Date.now() + err.backoffMs);
         logger.warn({ domain, backoffMs: err.backoffMs }, "RDAP 429 — domein tijdelijk overgeslagen");
-        results.push(staleOrUnknown(base, domain, "het domeinregister vraagt om minder verzoeken (429)"));
+        results.push(await staleOrUnknown(base, domain, "het domeinregister vraagt om minder verzoeken (429)"));
       } else {
         logger.warn({ err, domain }, "RDAP-verzoek mislukt");
         results.push(
-          staleOrUnknown(
+          await staleOrUnknown(
             base,
             domain,
             `verloopdatum kon niet worden opgevraagd (${err instanceof Error ? err.message : "onbekende fout"})`,
@@ -487,3 +522,24 @@ const RDAP_STALE_MAX_MS = 7 * DAY_MS;
 
 /** Delay between sequential RDAP requests to avoid hammering the registry. */
 const RDAP_REQUEST_DELAY_MS = 500;
+
+/**
+ * Loads the most recent persisted RDAP date for a domain from the database.
+ * Returns null when the DB is unavailable or no row exists.
+ */
+async function loadDomainExpiryFromDb(domain: string): Promise<DomainLastKnown | null> {
+  try {
+    const { db, domainExpiryCache } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+    const rows = await db
+      .select()
+      .from(domainExpiryCache)
+      .where(eq(domainExpiryCache.domain, domain))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return { date: row.expiresAt, fetchedAt: row.fetchedAt.getTime() };
+  } catch {
+    return null;
+  }
+}

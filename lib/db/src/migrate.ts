@@ -73,6 +73,17 @@ export async function ensureTablesExist(): Promise<void> {
         ON action_log (repo, run_id)
         WHERE kind = 'auto_retry'
     `);
+
+    // ── domain_expiry_cache ──────────────────────────────────────────────────
+    // Persists the most recent successful RDAP expiry date per domain so that
+    // the stale-fallback survives a server restart during an RDAP outage.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS domain_expiry_cache (
+        domain     TEXT PRIMARY KEY,
+        expires_at TIMESTAMPTZ NOT NULL,
+        fetched_at TIMESTAMPTZ NOT NULL
+      )
+    `);
   } finally {
     client.release();
   }
