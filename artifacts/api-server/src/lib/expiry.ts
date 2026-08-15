@@ -283,6 +283,7 @@ async function domainItems(): Promise<ExpiryItem[]> {
     ];
   }
   const domains = domainsEnv.split(",").map((d) => d.trim()).filter(Boolean);
+  const manual = parseManualExpiries();
   return Promise.all(
     domains.map(async (domain) => {
       const base = {
@@ -291,6 +292,22 @@ async function domainItems(): Promise<ExpiryItem[]> {
         category: "domain" as const,
         consequence,
       };
+
+      // Manually maintained date (e.g. .nl domains: SIDN publishes no expiry
+      // via RDAP). Never queried at the registry; the date comes from the
+      // EXPIRY_MANUAL secret and is clearly marked as manually entered.
+      const manualDate = manual.get(domain.toLowerCase());
+      if (manualDate) {
+        return known({ ...base, label: `Domein ${domain} (handmatig ingevoerd)` }, manualDate);
+      }
+      if (domain.toLowerCase().endsWith(".nl")) {
+        return unknown(
+          base,
+          "het .nl-register (SIDN) publiceert geen verloopdatum — zet de datum handmatig in het geheim EXPIRY_MANUAL, bijvoorbeeld: " +
+            `${domain}=2027-06-14`,
+        );
+      }
+
       try {
         const date = await domainExpiry(domain);
         if (!date)
@@ -304,6 +321,23 @@ async function domainItems(): Promise<ExpiryItem[]> {
       }
     }),
   );
+}
+
+/**
+ * Parses the EXPIRY_MANUAL secret: entries `domein=JJJJ-MM-DD`, separated by
+ * newlines, commas or semicolons. Invalid entries are skipped silently — an
+ * unreadable manual date simply leaves the domain "unknown" with instructions.
+ */
+function parseManualExpiries(): Map<string, Date> {
+  const raw = process.env.EXPIRY_MANUAL ?? "";
+  const map = new Map<string, Date>();
+  for (const entry of raw.split(/[\n,;]+/)) {
+    const [domain, dateStr] = entry.split("=").map((s) => s?.trim());
+    if (!domain || !dateStr) continue;
+    const date = new Date(`${dateStr}T00:00:00Z`);
+    if (!isNaN(date.getTime())) map.set(domain.toLowerCase(), date);
+  }
+  return map;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
