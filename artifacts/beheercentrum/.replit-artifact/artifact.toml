@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "FPS-Beheercentrum"
+description = "Alleen-lezen beheerscherm dat de status van de FPS GitHub-codebases toont: laatste controle (groen/rood/grijs), laatste push, laatste commit, faalredenen in gewone taal, en waarschuwingen bij ongewoon grote bestandswijzigingen."
+version = "1.0.0"
+id = "artifacts/beheercentrum"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22270
+
+[services.development]
+run = "pnpm --filter @workspace/beheercentrum run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/beheercentrum", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/beheercentrum/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22270"
+BASE_PATH = "/"

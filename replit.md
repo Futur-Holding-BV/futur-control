@@ -1,6 +1,6 @@
-# [Project name]
+# FPS-Beheercentrum
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Alleen-lezen beheerscherm dat de status van de FPS GitHub-codebases toont: laatste controle (groen/rood/grijs), laatste push, laatste commit, faalredenen in gewone taal, en waarschuwingen bij ongewoon grote bestandswijzigingen (>300 regels in één bestand).
 
 ## Run & Operate
 
@@ -22,11 +22,18 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- Frontend: `artifacts/beheercentrum` (React + Vite, wouter, Dutch UI, dark theme)
+- GitHub-client (read-only): `artifacts/api-server/src/lib/github.ts`
+- Routes: `artifacts/api-server/src/routes/repos.ts` (`GET /api/repos`, `GET /api/repos/:name/detail`)
+- API-contract: `lib/api-spec/openapi.yaml`
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Strikt read-only: alleen GET-verzoeken naar de GitHub API; geen database, geen opslag van code.
+- Bewaakte repos staan hardcoded in `MONITORED_REPOS` in `github.ts`; org komt uit `GITHUB_ORG`, auth uit `GITHUB_TOKEN` (Secrets).
+- Status komt van GitHub Actions workflow runs: success→groen, failure/timed_out→rood, geen runs of lopend→grijs.
+- Faalreden wordt vertaald naar gewone taal via naam van de gefaalde job/stap (typecheck/tests/lint/build/...).
+- Afwijking: laatste commit waarin één bestand >300 regels groeit of krimpt (additions+deletions).
 
 ## Product
 

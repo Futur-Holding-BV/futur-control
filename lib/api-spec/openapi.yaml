@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: repos
+    description: Read-only GitHub repository status
 paths:
   /healthz:
     get:
@@ -24,6 +26,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /repos:
+    get:
+      operationId: listRepos
+      tags: [repos]
+      summary: List monitored repositories with latest status
+      description: Returns one summary per monitored repository in the configured GitHub organization, including latest check status, last push time, last commit title, plain-language failure reason, and any large-file-change anomaly.
+      responses:
+        "200":
+          description: Repository summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RepoSummary"
+        "502":
+          description: GitHub API error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+  /repos/{name}/detail:
+    get:
+      operationId: getRepoDetail
+      tags: [repos]
+      summary: Repository detail with recent checks
+      description: Returns the last five check runs for a repository and, when the latest check failed, the first ten error lines plus a link to the full log.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Repository detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoDetail"
+        "404":
+          description: Repository not found or not monitored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+        "502":
+          description: GitHub API error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +87,106 @@ components:
           type: string
       required:
         - status
-
+    ApiErrorMessage:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    RepoSummary:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [green, red, gray]
+          description: green = latest check succeeded, red = failed, gray = no check ran
+        lastPushAt:
+          type: ["string", "null"]
+          format: date-time
+        lastCommitTitle:
+          type: ["string", "null"]
+        failReason:
+          type: ["string", "null"]
+          description: Plain-language reason when status is red (e.g. "typecheck faalt")
+        htmlUrl:
+          type: ["string", "null"]
+          description: Link to the repository on GitHub
+        anomaly:
+          oneOf:
+            - $ref: "#/components/schemas/AnomalyAlert"
+            - type: "null"
+    AnomalyAlert:
+      type: object
+      required: [commitSha, commitTitle, fileName, linesChanged, commitUrl]
+      properties:
+        commitSha:
+          type: string
+        commitTitle:
+          type: string
+        fileName:
+          type: string
+        linesChanged:
+          type: number
+          description: Total lines added plus deleted for the file in this commit
+        commitUrl:
+          type: string
+    CheckRun:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [green, red, gray]
+        completedAt:
+          type: ["string", "null"]
+          format: date-time
+        commitTitle:
+          type: ["string", "null"]
+        url:
+          type: ["string", "null"]
+          description: Link to the check run on GitHub
+    FailedCheckDetail:
+      type: object
+      required: [name, errorLines, logUrl]
+      properties:
+        name:
+          type: string
+        errorLines:
+          type: array
+          items:
+            type: string
+          description: First ten error lines from the failed run's log
+        logUrl:
+          type: string
+          description: Link to the full log on GitHub
+    RepoDetail:
+      type: object
+      required: [name, status, checks]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [green, red, gray]
+        lastPushAt:
+          type: ["string", "null"]
+          format: date-time
+        lastCommitTitle:
+          type: ["string", "null"]
+        failReason:
+          type: ["string", "null"]
+        htmlUrl:
+          type: ["string", "null"]
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckRun"
+        failedCheck:
+          oneOf:
+            - $ref: "#/components/schemas/FailedCheckDetail"
+            - type: "null"
