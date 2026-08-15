@@ -6,14 +6,6 @@
 
 const GITHUB_API = "https://api.github.com";
 
-export const MONITORED_REPOS = [
-  "FPS-Connect",
-  "FPS-One-Platform",
-  "FPS-One-Adviescentrum",
-  "FPS-Planner",
-  "koersa-frontend",
-] as const;
-
 function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -46,6 +38,18 @@ export class GitHubError extends Error {
   }
 }
 
+async function ghFetchUrl(url: string): Promise<Response> {
+  const token = requiredEnv("GITHUB_TOKEN");
+  return fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    redirect: "follow",
+  });
+}
+
 async function ghJson<T>(path: string): Promise<T> {
   const res = await ghFetch(path);
   if (!res.ok) {
@@ -57,11 +61,67 @@ async function ghJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Parse the URL for rel="next" from a GitHub Link header, or null if absent. */
+export function parseLinkNext(header: string | null): string | null {
+  if (!header) return null;
+  for (const part of header.split(",")) {
+    const match = part.match(/<([^>]+)>;\s*rel="next"/);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+/** Fetch all pages of a GitHub list endpoint that returns T[]. */
+async function ghJsonAll<T>(firstPath: string): Promise<T[]> {
+  const results: T[] = [];
+  let url: string | null = `${GITHUB_API}${firstPath}`;
+
+  while (url) {
+    const res = await ghFetchUrl(url);
+    if (!res.ok) {
+      throw new GitHubError(
+        `GitHub API ${res.status} voor ${firstPath.split("?")[0]}`,
+        res.status,
+      );
+    }
+    const page = (await res.json()) as T[];
+    results.push(...page);
+    url = parseLinkNext(res.headers.get("Link"));
+  }
+
+  return results;
+}
+
 interface GhRepo {
   name: string;
   html_url: string;
   pushed_at: string | null;
   default_branch: string;
+}
+
+/**
+ * Returns the list of repositories to monitor.
+ *
+ * Configurable via the MONITORED_REPOS environment variable
+ * (comma-separated repo names). When the variable is absent,
+ * all repositories of the GitHub organisation are returned
+ * automatically — including those added after the last deploy —
+ * so the list never needs a code change.
+ */
+export async function listMonitoredRepos(): Promise<string[]> {
+  const envList = process.env.MONITORED_REPOS;
+  if (envList) {
+    return envList
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean);
+  }
+
+  const org = githubOrg();
+  const repos = await ghJsonAll<GhRepo>(
+    `/orgs/${org}/repos?per_page=100&type=all&sort=pushed`,
+  );
+  return repos.map((r) => r.name);
 }
 
 interface GhCommitListItem {
