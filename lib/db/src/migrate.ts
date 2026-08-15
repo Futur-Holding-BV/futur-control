@@ -43,6 +43,13 @@ export async function ensureTablesExist(): Promise<void> {
         DROP COLUMN IF EXISTS last_notified_at
     `);
 
+    // Additive column migration: tracks when the most recent red Slack
+    // notification was delivered so reminder throttling survives restarts.
+    await client.query(`
+      ALTER TABLE repo_status_snapshots
+        ADD COLUMN IF NOT EXISTS last_red_notified_at TIMESTAMPTZ
+    `);
+
     // ── action_log ──────────────────────────────────────────────────────────
     // Audit log of automatic self-heal actions and manually approved
     // one-tap actions (GitHub Actions re-runs only; never code changes).

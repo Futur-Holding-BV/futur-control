@@ -1,10 +1,11 @@
 /**
- * Unit tests for the monitor's status-transition detection logic.
+ * Unit tests for the monitor's status-transition and reminder detection logic.
  *
  * All external dependencies are mocked:
  *   - @workspace/db        → pool + db (no real database)
  *   - ./github.js          → repoSummary (no real GitHub calls)
- *   - ./notifications.js   → notifyRepoRed / notifyAnomaly (no real Slack calls)
+ *   - ./notifications.js   → notification helpers (no real Slack calls)
+ *   - ./selfheal.js        → maybeAutoRetry / settleRecovery (no real GitHub calls)
  *   - ./logger.js          → silent logger
  */
 
@@ -48,12 +49,14 @@ vi.mock("./github.js", () => ({
 vi.mock("./notifications.js", () => ({
   notifyRepoRed: vi.fn(),
   notifyMultipleReposRed: vi.fn(),
+  notifyRepoRedReminder: vi.fn(),
+  notifyMultipleReposRedReminder: vi.fn(),
   notifyAnomaly: vi.fn(),
 }));
 
 vi.mock("./selfheal.js", () => ({
-  maybeAutoRetry: vi.fn(async () => false),
-  settleRecovery: vi.fn(async () => false),
+  maybeAutoRetry: vi.fn().mockResolvedValue(false),
+  settleRecovery: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ---------------------------------------------------------------------------
@@ -62,7 +65,7 @@ vi.mock("./selfheal.js", () => ({
 
 import { pollAll } from "./monitor.js";
 import { repoSummary } from "./github.js";
-import { notifyRepoRed, notifyAnomaly } from "./notifications.js";
+import { notifyRepoRed, notifyRepoRedReminder, notifyAnomaly } from "./notifications.js";
 import { db } from "@workspace/db";
 import type { RepoSummary, Anomaly } from "./github.js";
 
@@ -103,11 +106,16 @@ function mockSnapshot(snapshot: {
   status: string;
   notifiedStatus: string;
   notifiedAnomalySha: string | null;
+  lastRedNotifiedAt?: Date | null;
 } | null) {
+  const row = snapshot
+    ? { ...snapshot, lastRedNotifiedAt: snapshot.lastRedNotifiedAt ?? null }
+    : null;
+
   const selectMock = {
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockResolvedValue(snapshot ? [snapshot] : []),
+    limit: vi.fn().mockResolvedValue(row ? [row] : []),
   };
   vi.mocked(db.select).mockReturnValue(selectMock as unknown as ReturnType<typeof db.select>);
 
@@ -118,6 +126,14 @@ function mockSnapshot(snapshot: {
   vi.mocked(db.insert).mockReturnValue(insertMock as unknown as ReturnType<typeof db.insert>);
 }
 
+/** Read back the values passed to saveSnapshot via the db.insert mock. */
+function getSavedValues(): Record<string, unknown> {
+  const insertMock = vi.mocked(db.insert).mock.results[0]?.value as {
+    values: ReturnType<typeof vi.fn>;
+  };
+  return insertMock.values.mock.calls[0]?.[0] as Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Tests: status transition detection
 // ---------------------------------------------------------------------------
@@ -126,19 +142,27 @@ describe("pollAll — status transition detection", () => {
   beforeEach(() => {
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
     vi.mocked(notifyAnomaly).mockResolvedValue(true);
+    vi.mocked(notifyRepoRedReminder).mockResolvedValue(true);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("does NOT notify when status is red but was already notified as red (stable red)", async () => {
-    mockSnapshot({ status: "red", notifiedStatus: "red", notifiedAnomalySha: null });
+  it("does NOT notify when status is red but was already notified as red (stable red, no reminder due)", async () => {
+    // lastRedNotifiedAt = now → reminder not yet due
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: new Date(),
+    });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "tests falen" }));
 
     await pollAll();
 
     expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(notifyRepoRedReminder).not.toHaveBeenCalled();
   });
 
   it("notifies when status transitions from green to red", async () => {
@@ -177,13 +201,10 @@ describe("pollAll — status transition detection", () => {
 
     await pollAll();
 
-    // notifyRepoRed must NOT be called (gray is not a transition we alert on)
     expect(notifyRepoRed).not.toHaveBeenCalled();
 
-    // Verify the snapshot is saved with notifiedStatus still "red"
-    const insertMock = vi.mocked(db.insert).mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };
-    const savedValues = insertMock.values.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(savedValues["notifiedStatus"]).toBe("red");
+    const saved = getSavedValues();
+    expect(saved["notifiedStatus"]).toBe("red");
   });
 
   it("resets notifiedStatus when repo recovers from red to green", async () => {
@@ -194,9 +215,24 @@ describe("pollAll — status transition detection", () => {
 
     expect(notifyRepoRed).not.toHaveBeenCalled();
 
-    const insertMock = vi.mocked(db.insert).mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };
-    const savedValues = insertMock.values.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(savedValues["notifiedStatus"]).toBe("green");
+    const saved = getSavedValues();
+    expect(saved["notifiedStatus"]).toBe("green");
+  });
+
+  it("resets lastRedNotifiedAt to null when repo recovers from red to green", async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: twoHoursAgo,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "green" }));
+
+    await checkRepo(repoName);
+
+    const saved = getSavedValues();
+    expect(saved["lastRedNotifiedAt"]).toBeNull();
   });
 
   it("does NOT advance notifiedStatus to red when the Slack delivery fails", async () => {
@@ -206,10 +242,160 @@ describe("pollAll — status transition detection", () => {
 
     await pollAll();
 
-    const insertMock = vi.mocked(db.insert).mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };
-    const savedValues = insertMock.values.mock.calls[0]?.[0] as Record<string, unknown>;
+    const saved = getSavedValues();
     // notifiedStatus must NOT advance — same as before (green)
-    expect(savedValues["notifiedStatus"]).toBe("green");
+    expect(saved["notifiedStatus"]).toBe("green");
+  });
+
+  it("persists lastRedNotifiedAt when a new red notification is delivered", async () => {
+    mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "build faalt" }));
+    vi.mocked(notifyRepoRed).mockResolvedValue(true);
+
+    const before = Date.now();
+    await checkRepo(repoName);
+    const after = Date.now();
+
+    const saved = getSavedValues();
+    const savedTs = saved["lastRedNotifiedAt"] as Date | null;
+    expect(savedTs).toBeInstanceOf(Date);
+    expect(savedTs!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(savedTs!.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it("does NOT set lastRedNotifiedAt when the new-red Slack delivery fails", async () => {
+    mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "lint faalt" }));
+    vi.mocked(notifyRepoRed).mockResolvedValue(false);
+
+    await checkRepo(repoName);
+
+    const saved = getSavedValues();
+    expect(saved["lastRedNotifiedAt"]).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: reminder notifications
+// ---------------------------------------------------------------------------
+
+describe("checkRepo — reminder notifications", () => {
+  const REMINDER_MS = 60 * 60 * 1000; // 60 minutes (default)
+
+  beforeEach(() => {
+    vi.mocked(notifyRepoRed).mockResolvedValue(true);
+    vi.mocked(notifyRepoRedReminder).mockResolvedValue(true);
+    vi.mocked(notifyAnomaly).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends a reminder when repo is still red and the interval has elapsed", async () => {
+    const overOneHourAgo = new Date(Date.now() - REMINDER_MS - 1000);
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: overOneHourAgo,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "CI faalt" }));
+
+    await checkRepo(repoName);
+
+    expect(notifyRepoRedReminder).toHaveBeenCalledOnce();
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+  });
+
+  it("does NOT send a reminder when the interval has not yet elapsed", async () => {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: thirtyMinutesAgo,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "CI faalt" }));
+
+    await checkRepo(repoName);
+
+    expect(notifyRepoRedReminder).not.toHaveBeenCalled();
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+  });
+
+  it("does NOT send a reminder when lastRedNotifiedAt is null (edge: not yet notified)", async () => {
+    // notifiedStatus is somehow red but no timestamp — should not fire reminder
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: null,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "CI faalt" }));
+
+    await checkRepo(repoName);
+
+    expect(notifyRepoRedReminder).not.toHaveBeenCalled();
+  });
+
+  it("resets the reminder timer (lastRedNotifiedAt) when a reminder is delivered", async () => {
+    const overOneHourAgo = new Date(Date.now() - REMINDER_MS - 1000);
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: overOneHourAgo,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "CI faalt" }));
+
+    const before = Date.now();
+    await checkRepo(repoName);
+    const after = Date.now();
+
+    const saved = getSavedValues();
+    const savedTs = saved["lastRedNotifiedAt"] as Date | null;
+    expect(savedTs).toBeInstanceOf(Date);
+    expect(savedTs!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(savedTs!.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it("does NOT reset the reminder timer when the reminder delivery fails", async () => {
+    const overOneHourAgo = new Date(Date.now() - REMINDER_MS - 1000);
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: overOneHourAgo,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "CI faalt" }));
+    vi.mocked(notifyRepoRedReminder).mockResolvedValue(false);
+
+    await checkRepo(repoName);
+
+    const saved = getSavedValues();
+    const savedTs = saved["lastRedNotifiedAt"] as Date | null;
+    // Should still be the old timestamp (unchanged)
+    expect(savedTs?.getTime()).toBe(overOneHourAgo.getTime());
+  });
+
+  it("notifyRepoRedReminder receives the correct duration (approx)", async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * REMINDER_MS);
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: twoHoursAgo,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red" }));
+
+    await checkRepo(repoName);
+
+    expect(notifyRepoRedReminder).toHaveBeenCalledOnce();
+    const [, durationMs] = vi.mocked(notifyRepoRedReminder).mock.calls[0]!;
+    // Duration should be ≈ 2 hours (allow ±5 s for execution time)
+    expect(durationMs).toBeGreaterThanOrEqual(2 * REMINDER_MS - 5_000);
+    expect(durationMs).toBeLessThanOrEqual(2 * REMINDER_MS + 5_000);
   });
 });
 
@@ -276,9 +462,8 @@ describe("pollAll — anomaly notification", () => {
 
     await pollAll();
 
-    const insertMock = vi.mocked(db.insert).mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };
-    const savedValues = insertMock.values.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(savedValues["notifiedAnomalySha"]).toBeNull();
+    const saved = getSavedValues();
+    expect(saved["notifiedAnomalySha"]).toBeNull();
   });
 
   it("does not call notifyAnomaly when no anomaly is present", async () => {

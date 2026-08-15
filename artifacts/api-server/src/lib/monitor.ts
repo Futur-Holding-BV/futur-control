@@ -4,6 +4,7 @@
  * Notifications are sent on:
  *   • green → red status transition (failed GitHub Actions check)
  *   • new anomaly commit (>300 changed lines in one file)
+ *   • repo still red after REMINDER_INTERVAL_MS since the last red notification
  *
  * Concurrency & delivery guarantees
  * ──────────────────────────────────
@@ -28,17 +29,28 @@
 import { pool, db, repoStatusSnapshots } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { listMonitoredRepos, repoSummary, type Status, type Anomaly, type RepoSummary } from "./github.js";
-import { notifyRepoRed, notifyMultipleReposRed, notifyAnomaly } from "./notifications.js";
+import {
+  notifyRepoRed,
+  notifyMultipleReposRed,
+  notifyRepoRedReminder,
+  notifyMultipleReposRedReminder,
+  notifyAnomaly,
+} from "./notifications.js";
 import { maybeAutoRetry, settleRecovery } from "./selfheal.js";
 import { logger } from "./logger.js";
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const ADVISORY_LOCK_KEY = "6839201475"; // stable across restarts; fits pg bigint
 
-// ---------------------------------------------------------------------------
-// Local structural type — avoids importing from 'pg' directly.
-// Only the two methods we actually call are declared.
-// ---------------------------------------------------------------------------
+/**
+ * How long a repo must remain continuously red before a reminder notification
+ * is sent.  Survives server restarts because last_red_notified_at is stored in
+ * the database.  Configurable via REMINDER_INTERVAL_MS environment variable;
+ * defaults to 60 minutes.
+ */
+const REMINDER_INTERVAL_MS = Number(
+  process.env["REMINDER_INTERVAL_MS"] ?? 60 * 60 * 1000,
+);
 interface PgPoolClient {
   query(
     text: string,
@@ -91,6 +103,8 @@ interface Snapshot {
   status: string;
   notifiedStatus: string;
   notifiedAnomalySha: string | null;
+  /** When the most recent red Slack notification was delivered (null = never). */
+  lastRedNotifiedAt: Date | null;
 }
 
 async function loadSnapshot(repoName: string): Promise<Snapshot | null> {
@@ -100,7 +114,14 @@ async function loadSnapshot(repoName: string): Promise<Snapshot | null> {
       .from(repoStatusSnapshots)
       .where(eq(repoStatusSnapshots.repoName, repoName))
       .limit(1);
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      status: row.status,
+      notifiedStatus: row.notifiedStatus,
+      notifiedAnomalySha: row.notifiedAnomalySha ?? null,
+      lastRedNotifiedAt: row.lastRedNotifiedAt ?? null,
+    };
   } catch {
     return null;
   }
@@ -111,14 +132,28 @@ async function saveSnapshot(
   status: Status,
   notifiedStatus: string,
   notifiedAnomalySha: string | null,
+  lastRedNotifiedAt: Date | null,
 ): Promise<void> {
   try {
     await db
       .insert(repoStatusSnapshots)
-      .values({ repoName, status, notifiedStatus, notifiedAnomalySha, updatedAt: new Date() })
+      .values({
+        repoName,
+        status,
+        notifiedStatus,
+        notifiedAnomalySha,
+        lastRedNotifiedAt,
+        updatedAt: new Date(),
+      })
       .onConflictDoUpdate({
         target: repoStatusSnapshots.repoName,
-        set: { status, notifiedStatus, notifiedAnomalySha, updatedAt: new Date() },
+        set: {
+          status,
+          notifiedStatus,
+          notifiedAnomalySha,
+          lastRedNotifiedAt,
+          updatedAt: new Date(),
+        },
       });
   } catch (err) {
     logger.warn({ err, repo: repoName }, "Snapshot opslaan mislukt");
@@ -134,12 +169,20 @@ interface RepoCheckData {
   summary: RepoSummary;
   notifiedStatus: string;
   notifiedAnomalySha: string | null;
+  /** When the most recent red notification was delivered; null if never. */
+  lastRedNotifiedAt: Date | null;
   /**
    * True when this repo transitions to red and has not yet been notified,
    * AND no automatic retry was started (selfheal).  When a retry is started,
    * we hold back the notification until the next poll.
    */
   isNewRed: boolean;
+  /**
+   * True when the repo is already red (notifiedStatus === "red") and the
+   * reminder interval has elapsed since the last red notification.  Mutually
+   * exclusive with isNewRed.
+   */
+  isReminderDue: boolean;
   /** Anomaly that hasn't been notified yet, or null. */
   newAnomaly: Anomaly | null;
 }
@@ -163,6 +206,7 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
   const snapshot = await loadSnapshot(repoName);
   const notifiedStatus = snapshot?.notifiedStatus ?? "gray";
   const notifiedAnomalySha = snapshot?.notifiedAnomalySha ?? null;
+  const lastRedNotifiedAt = snapshot?.lastRedNotifiedAt ?? null;
 
   let isNewRed = summary.status === "red" && notifiedStatus !== "red";
   if (isNewRed) {
@@ -178,6 +222,22 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
     }
   }
 
+  // Reminder: repo is already red (notifiedStatus === "red") and has been so
+  // for longer than REMINDER_INTERVAL_MS since the last red notification.
+  const isReminderDue =
+    !isNewRed &&
+    summary.status === "red" &&
+    notifiedStatus === "red" &&
+    lastRedNotifiedAt !== null &&
+    Date.now() - lastRedNotifiedAt.getTime() >= REMINDER_INTERVAL_MS;
+
+  if (isReminderDue) {
+    logger.info(
+      { repo: repoName, lastRedNotifiedAt, reminderIntervalMs: REMINDER_INTERVAL_MS },
+      "Herinnering: repo blijft rood",
+    );
+  }
+
   const anomaly = summary.anomaly ?? null;
   const newAnomaly =
     anomaly && anomaly.commitSha !== notifiedAnomalySha ? anomaly : null;
@@ -185,13 +245,85 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
     logger.info({ repo: repoName, sha: newAnomaly.commitSha }, "Nieuwe afwijking gedetecteerd");
   }
 
-  return { repoName, summary, notifiedStatus, notifiedAnomalySha, isNewRed, newAnomaly };
+  return {
+    repoName,
+    summary,
+    notifiedStatus,
+    notifiedAnomalySha,
+    lastRedNotifiedAt,
+    isNewRed,
+    isReminderDue,
+    newAnomaly,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Poll cycle (guarded by advisory lock)
-// ---------------------------------------------------------------------------
+/**
+ * Processes a single repo: gathers its status, sends any required Slack
+ * notifications, and persists the updated snapshot.
+ *
+ * This function does NOT apply bundling logic (≥2 repos → one message).
+ * Bundling only happens inside pollAll which processes all repos together.
+ * checkRepo is exported so unit tests can exercise the per-repo logic in
+ * isolation without standing up the full poll cycle.
+ */
+export async function checkRepo(repoName: string): Promise<void> {
+  const data = await gatherRepoData(repoName);
+  if (!data) return;
 
+  const {
+    summary,
+    notifiedStatus,
+    notifiedAnomalySha,
+    lastRedNotifiedAt,
+    isNewRed,
+    isReminderDue,
+    newAnomaly,
+  } = data;
+
+  let newNotifiedStatus = notifiedStatus;
+  let newLastRedNotifiedAt = lastRedNotifiedAt;
+
+  if (isNewRed) {
+    const delivered = await notifyRepoRed(summary);
+    if (delivered) {
+      newNotifiedStatus = "red";
+      newLastRedNotifiedAt = new Date();
+    }
+  } else if (isReminderDue) {
+    const redSinceMs = lastRedNotifiedAt
+      ? Date.now() - lastRedNotifiedAt.getTime()
+      : REMINDER_INTERVAL_MS;
+    const delivered = await notifyRepoRedReminder(summary, redSinceMs);
+    if (delivered) {
+      // Reset the timer so the next reminder fires REMINDER_INTERVAL_MS later.
+      newLastRedNotifiedAt = new Date();
+    }
+  } else if (summary.status === "green" && notifiedStatus === "red") {
+    // Recovery: reset so the next red→green→red cycle alerts again.
+    newNotifiedStatus = "green";
+    newLastRedNotifiedAt = null;
+  }
+
+  if (summary.status === "green") {
+    await settleRecovery(repoName);
+  }
+
+  let newNotifiedAnomalySha = notifiedAnomalySha;
+  if (newAnomaly) {
+    const delivered = await notifyAnomaly(repoName, newAnomaly, summary.htmlUrl);
+    if (delivered) {
+      newNotifiedAnomalySha = newAnomaly.commitSha;
+    }
+  }
+
+  await saveSnapshot(
+    repoName,
+    summary.status,
+    newNotifiedStatus,
+    newNotifiedAnomalySha,
+    newLastRedNotifiedAt,
+  );
+}
 /** Exported for unit-testing only. */
 export async function pollAll(): Promise<void> {
   let lockClient: PgPoolClient | null = null;
@@ -235,18 +367,56 @@ export async function pollAll(): Promise<void> {
       if (delivered) redDelivered.add(r.repoName);
     }
 
-    // 3. Send anomaly notifications, settle recoveries, and persist snapshots.
-    for (const data of results) {
-      const { repoName, summary, notifiedStatus, notifiedAnomalySha } = data;
+    // 3. Send reminder notifications for repos that have stayed red too long.
+    //    Same bundling logic: ≥2 → one message, 1 → individual.
+    const reminderRepos = results.filter((r) => r.isReminderDue);
+    const reminderDelivered = new Set<string>();
 
-      // Determine new notified-status to persist.
+    if (reminderRepos.length >= 2) {
+      const entries = reminderRepos.map((r) => ({
+        summary: r.summary,
+        redSinceMs: r.lastRedNotifiedAt
+          ? Date.now() - r.lastRedNotifiedAt.getTime()
+          : REMINDER_INTERVAL_MS,
+      }));
+      const delivered = await notifyMultipleReposRedReminder(entries);
+      if (delivered) {
+        for (const r of reminderRepos) reminderDelivered.add(r.repoName);
+      }
+    } else if (reminderRepos.length === 1) {
+      const r = reminderRepos[0]!;
+      const redSinceMs = r.lastRedNotifiedAt
+        ? Date.now() - r.lastRedNotifiedAt.getTime()
+        : REMINDER_INTERVAL_MS;
+      const delivered = await notifyRepoRedReminder(r.summary, redSinceMs);
+      if (delivered) reminderDelivered.add(r.repoName);
+    }
+
+    // 4. Send anomaly notifications, settle recoveries, and persist snapshots.
+    for (const data of results) {
+      const {
+        repoName,
+        summary,
+        notifiedStatus,
+        notifiedAnomalySha,
+        lastRedNotifiedAt,
+      } = data;
+
+      // Determine new notified-status and reminder timestamp to persist.
       let newNotifiedStatus = notifiedStatus;
+      let newLastRedNotifiedAt = lastRedNotifiedAt;
+
       if (data.isNewRed && redDelivered.has(repoName)) {
         newNotifiedStatus = "red";
+        newLastRedNotifiedAt = new Date();
+      } else if (reminderDelivered.has(repoName)) {
+        // Reset timer so the next reminder fires REMINDER_INTERVAL_MS later.
+        newLastRedNotifiedAt = new Date();
       } else if (summary.status === "green" && notifiedStatus === "red") {
         // Confirmed recovery: reset so the next red→green→red cycle alerts again.
         // We deliberately do NOT reset on gray (not a recovery).
         newNotifiedStatus = "green";
+        newLastRedNotifiedAt = null;
       }
 
       // Settle a pending automatic retry: when the repo is green thanks to a
@@ -264,7 +434,13 @@ export async function pollAll(): Promise<void> {
         }
       }
 
-      await saveSnapshot(repoName, summary.status, newNotifiedStatus, newNotifiedAnomalySha);
+      await saveSnapshot(
+        repoName,
+        summary.status,
+        newNotifiedStatus,
+        newNotifiedAnomalySha,
+        newLastRedNotifiedAt,
+      );
     }
 
     logger.debug("Monitor: controle afgerond");

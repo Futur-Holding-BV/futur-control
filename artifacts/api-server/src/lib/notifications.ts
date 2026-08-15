@@ -192,6 +192,118 @@ export async function notifyRepoRed(summary: RepoSummary): Promise<boolean> {
   return delivered;
 }
 
+// ---------------------------------------------------------------------------
+// Reminder helpers
+// ---------------------------------------------------------------------------
+
+function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 120) return `${minutes} minuten`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} uur`;
+}
+
+/**
+ * Reminder: notify Slack that a single repository has been red for an extended
+ * period without recovering.
+ * Returns true when the message was delivered; false on any failure.
+ */
+export async function notifyRepoRedReminder(
+  summary: RepoSummary,
+  redSinceMs: number,
+): Promise<boolean> {
+  if (!isEnabled()) return false;
+  const webhookUrl = resolveWebhookUrl();
+  if (!webhookUrl) return false;
+
+  const repoUrl = summary.htmlUrl ?? `https://github.com/${summary.name}`;
+  const reason = summary.failReason ?? "Controle faalt";
+  const duration = formatDuration(redSinceMs);
+
+  const payload = {
+    text: `🔴 *${summary.name}* is al ${duration} rood`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `🔴 *<${repoUrl}|${summary.name}>* — nog steeds rood na ${duration}`,
+        },
+      },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*Reden*\n${reason}` },
+          ...(summary.lastCommitTitle
+            ? [{ type: "mrkdwn", text: `*Laatste commit*\n${summary.lastCommitTitle}` }]
+            : []),
+        ],
+      },
+      {
+        type: "actions",
+        elements: [
+          { type: "button", text: { type: "plain_text", text: "Bekijk repository" }, url: repoUrl },
+        ],
+      },
+    ],
+  };
+
+  const delivered = await post(webhookUrl, payload);
+  if (delivered) {
+    logger.info({ repo: summary.name, durationMs: redSinceMs }, "Herinnering rode-status verstuurd");
+  }
+  return delivered;
+}
+
+/**
+ * Bundled reminder: notify Slack that multiple repositories have been red for
+ * an extended period. Each entry carries how long that repo has been red.
+ * Returns true when the message was delivered; false on any failure.
+ */
+export async function notifyMultipleReposRedReminder(
+  entries: Array<{ summary: RepoSummary; redSinceMs: number }>,
+): Promise<boolean> {
+  if (!isEnabled()) return false;
+  const webhookUrl = resolveWebhookUrl();
+  if (!webhookUrl) return false;
+
+  const count = entries.length;
+  const repoLines = entries
+    .map(({ summary: s, redSinceMs }) => {
+      const url = s.htmlUrl ?? `https://github.com/${s.name}`;
+      const reason = s.failReason ?? "Controle faalt";
+      const duration = formatDuration(redSinceMs);
+      return `• *<${url}|${s.name}>* — ${reason} _(al ${duration})_`;
+    })
+    .join("\n");
+
+  const payload = {
+    text: `🔴 ${count} codebases zijn al langere tijd rood`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `🔴 *${count} codebases zijn al langere tijd rood*`,
+        },
+      },
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: repoLines },
+      },
+    ],
+  };
+
+  const delivered = await post(webhookUrl, payload);
+  if (delivered) {
+    logger.info(
+      { repos: entries.map((e) => e.summary.name) },
+      "Gebundelde herinnering rode-status verstuurd",
+    );
+  }
+  return delivered;
+}
+
 /**
  * Notify Slack that an anomaly (large-file commit) was detected.
  * Returns true when the message was delivered; false on any failure.
