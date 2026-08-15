@@ -251,6 +251,36 @@ describe(".nl-domein — handmatig invoer (EXPIRY_MANUAL)", () => {
     // Label must indicate the date was entered manually.
     expect(domain!.label).toMatch(/handmatig/i);
   });
+
+  it("geeft severity unknown als EXPIRY_MANUAL een ongeldige datum bevat voor het .nl-domein", async () => {
+    // Typo: "niet-een-datum" is not a valid date → parseManualExpiries skips it silently.
+    process.env.EXPIRY_MANUAL = `${NL_DOMAIN}=niet-een-datum`;
+    stubFetch(() => { throw new Error("should not be called for .nl"); });
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${NL_DOMAIN}`);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).toBe("unknown");
+    expect(domain!.expiresAt).toBeNull();
+    // The message must still reference EXPIRY_MANUAL so the operator knows how to fix it.
+    expect(domain!.unknownReason).toMatch(/EXPIRY_MANUAL/);
+  });
+
+  it("geen kruisbesmetting: geldig EXPIRY_MANUAL-item voor een ander domein laat het .nl-domein onbekend", async () => {
+    // Only "anders.nl" has a valid entry; NL_DOMAIN ("voorbeeld.nl") is absent.
+    process.env.EXPIRY_MANUAL = `anders.nl=2030-06-14`;
+    stubFetch(() => { throw new Error("should not be called for .nl"); });
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${NL_DOMAIN}`);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).toBe("unknown");
+    expect(domain!.expiresAt).toBeNull();
+    // The message must reference EXPIRY_MANUAL so the operator knows what to do.
+    expect(domain!.unknownReason).toMatch(/EXPIRY_MANUAL/);
+  });
 });
 
 describe("domeinverloopdatum — cache ouder dan 7 dagen", () => {
