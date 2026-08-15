@@ -3,11 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Bell, ShieldCheck } from "lucide-react";
+import { Bell, ShieldCheck, ClipboardList } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import RepoDetail from "@/pages/repo";
 import NotificationsPage from "@/pages/notifications";
+import Logboek from "@/pages/logboek";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,13 +32,22 @@ function Header() {
             <span className="text-[10px] uppercase font-medium tracking-widest text-muted-foreground mt-1">Systeemstatus</span>
           </div>
         </Link>
-        <Link
-          href="/notifications"
-          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Bell className="h-4 w-4" />
-          <span className="hidden sm:inline">Meldingen</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/logboek"
+            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <ClipboardList className="h-4 w-4" />
+            <span className="hidden sm:inline">Logboek</span>
+          </Link>
+          <Link
+            href="/notifications"
+            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Bell className="h-4 w-4" />
+            <span className="hidden sm:inline">Meldingen</span>
+          </Link>
+        </div>
       </div>
     </header>
   );
@@ -53,6 +63,7 @@ function Router() {
             <Route path="/" component={Home} />
             <Route path="/repo/:name" component={RepoDetail} />
             <Route path="/notifications" component={NotificationsPage} />
+            <Route path="/logboek" component={Logboek} />
             <Route component={NotFound} />
           </Switch>
         </RoutedErrorBoundary>

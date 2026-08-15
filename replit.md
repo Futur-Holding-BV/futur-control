@@ -24,13 +24,17 @@ Alleen-lezen beheerscherm dat de status van de FPS GitHub-codebases toont: laats
 
 - Frontend: `artifacts/beheercentrum` (React + Vite, wouter, Dutch UI, dark theme)
 - GitHub-client (read-only): `artifacts/api-server/src/lib/github.ts`
-- Routes: `artifacts/api-server/src/routes/repos.ts` (`GET /api/repos`, `GET /api/repos/:name/detail`)
+- Routes: `artifacts/api-server/src/routes/` — repos (`/api/repos`, `/api/repos/:name/detail`), expiry (`/api/expiry`), actions (`/api/actions/log`, `/api/actions/proposals`, `POST /api/actions/proposals/:id/execute`)
+- Zelfherstel & logboek: `artifacts/api-server/src/lib/selfheal.ts`, `actionlog.ts`, `proposals.ts`, `expiry.ts`; DB-tabel `action_log`
 - API-contract: `lib/api-spec/openapi.yaml`
 
 ## Architecture decisions
 
-- Strikt read-only: alleen GET-verzoeken naar de GitHub API; geen database, geen opslag van code.
-- Bewaakte repos staan hardcoded in `MONITORED_REPOS` in `github.ts`; org komt uit `GITHUB_ORG`, auth uit `GITHUB_TOKEN` (Secrets).
+- Read-only richting de codebases: alleen GET-verzoeken naar de GitHub API. Eén bewuste uitzondering: het opnieuw starten van een bestaande Actions-run (`rerun-failed-jobs`) — automatisch (max. 1x, alleen bij tijdelijke haperingen) of via een expliciet goedgekeurd voorstel. Nooit: code wijzigen, database aanpassen, productie herstarten of deployen.
+- Bewaakte repos: env `MONITORED_REPOS` (kommagescheiden) of anders automatisch alle repos van de org; org uit `GITHUB_ORG`, auth uit `GITHUB_TOKEN` (Secrets).
+- "Loopt af"-blok (`lib/expiry.ts`): GitHub-tokenexpiry via de `github-authentication-token-expiration` responseheader; TLS via directe socket (env `EXPIRY_TLS_HOSTS`); domeinverlenging via publieke RDAP (env `EXPIRY_DOMAINS`); Azure-clientsleutel via Microsoft Graph (env `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`). Onleesbaar = severity "unknown" met reden, nooit ok.
+- Zelfherstel (`lib/selfheal.ts`): rode run met tijdelijk ogende fout (netwerk/timeout/limiet) → één automatische rerun; melding wordt vastgehouden tot de herhaling klaar is; alles gelogd in `action_log`. Groen na herhaling = badge "hersteld na herhaling".
+- Voorstellen (`lib/proposals.ts`): stateless berekend, id codeert repo+runId zodat verouderde knoppen een 404 geven; uitvoeren alleen via POST na gebruikersklik.
 - Status komt van GitHub Actions workflow runs: success→groen, failure/timed_out→rood, geen runs of lopend→grijs.
 - Faalreden wordt vertaald naar gewone taal via naam van de gefaalde job/stap (typecheck/tests/lint/build/...).
 - Afwijking: laatste commit waarin één bestand >300 regels groeit of krimpt (additions+deletions).

@@ -1,5 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useListRepos, getListReposQueryKey } from "@workspace/api-client-react";
+import { 
+  useListRepos, getListReposQueryKey,
+  useListExpiryItems,
+  useListProposals
+} from "@workspace/api-client-react";
 import { Link } from "wouter";
 import { 
   AlertTriangle, 
@@ -8,10 +12,12 @@ import {
   ChevronRight,
   ShieldAlert,
   GitCommitHorizontal,
-  ServerCrash
+  ServerCrash,
+  HelpCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatTimeAgo, cn } from "@/lib/utils";
+import { ProposalCard } from "@/components/proposal-card";
 
 function StatusDot({ status, pulsing = false }: { status: "green" | "red" | "gray", pulsing?: boolean }) {
   return (
@@ -35,6 +41,8 @@ function StatusDot({ status, pulsing = false }: { status: "green" | "red" | "gra
 export default function Home() {
   const queryClient = useQueryClient();
   const { data: repos, isLoading, isError, error, isRefetching } = useListRepos();
+  const { data: expiryItems } = useListExpiryItems();
+  const { data: proposals } = useListProposals();
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: getListReposQueryKey() });
@@ -78,8 +86,77 @@ export default function Home() {
         </div>
       )}
 
-      {!isError && anomalies.length > 0 && (
+      {/* Loopt af block */}
+      {expiryItems && expiryItems.length > 0 && (
         <div className="flex flex-col gap-3">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">Loopt af</h2>
+          <div className="grid grid-cols-1 gap-3">
+            {expiryItems.map(item => {
+              const isRed = item.severity === 'red';
+              const isOrange = item.severity === 'orange';
+              const isUnknown = item.severity === 'unknown';
+              return (
+                <div key={item.id} className={cn(
+                  "rounded-xl border p-4 flex flex-col gap-2",
+                  isRed ? "bg-destructive/10 border-destructive/30" :
+                  isOrange ? "bg-amber-500/10 border-amber-500/30" :
+                  isUnknown ? "bg-muted/50 border-muted-foreground/30" :
+                  "bg-card border-border"
+                )}>
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                    <div>
+                      <h3 className={cn("font-medium flex items-center gap-2", 
+                        isRed ? "text-destructive" :
+                        isOrange ? "text-amber-500" :
+                        isUnknown ? "text-muted-foreground" :
+                        "text-foreground"
+                      )}>
+                        {isRed && <AlertTriangle className="h-4 w-4" />}
+                        {isOrange && <AlertTriangle className="h-4 w-4" />}
+                        {isUnknown && <HelpCircle className="h-4 w-4" />}
+                        {item.label}
+                      </h3>
+                      <p className="text-sm mt-1 text-muted-foreground leading-relaxed">{item.consequence}</p>
+                    </div>
+                    <div className="text-left sm:text-right shrink-0 mt-2 sm:mt-0 sm:max-w-[260px]">
+                      {isUnknown ? (
+                        <div className="text-sm font-medium text-muted-foreground">
+                          Onbekend
+                          <div className="text-xs font-normal opacity-80 mt-0.5">{item.unknownReason}</div>
+                        </div>
+                      ) : (
+                        <div className={cn("text-sm font-medium", isRed ? "text-destructive" : isOrange ? "text-amber-500" : "text-foreground")}>
+                          {item.daysLeft != null && item.daysLeft < 0 ? 'Verlopen' : 
+                           item.daysLeft != null ? `Nog ${item.daysLeft} dagen` : ''}
+                          <div className="text-xs font-normal opacity-80 mt-0.5">
+                            {item.expiresAt ? new Date(item.expiresAt).toLocaleDateString('nl-NL') : ''}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Proposals block */}
+      {proposals && proposals.length > 0 && (
+        <div className="flex flex-col gap-3 mt-2">
+          <h2 className="text-lg font-semibold tracking-tight text-primary">Voorstellen</h2>
+          <div className="grid grid-cols-1 gap-3">
+            {proposals.map(proposal => (
+              <ProposalCard key={proposal.id} proposal={proposal} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Anomalies */}
+      {!isError && anomalies.length > 0 && (
+        <div className="flex flex-col gap-3 mt-2">
           {anomalies.map((anomaly, idx) => (
             <div 
               key={`${anomaly.repoName}-${anomaly.commitSha}-${idx}`}
@@ -130,7 +207,7 @@ export default function Home() {
       )}
 
       {!isLoading && !isError && repos?.length === 0 && (
-        <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-border border-dashed bg-card/50">
+        <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-border border-dashed bg-card/50 mt-2">
           <p className="text-muted-foreground">Geen codebases gevonden in deze organisatie.</p>
         </div>
       )}
@@ -152,7 +229,6 @@ export default function Home() {
               )}
               style={{ animationDelay: `${idx * 50}ms` }}
             >
-              {/* Left accent border on hover */}
               <div className={cn(
                 "absolute inset-y-0 left-0 w-1 transition-transform duration-300 origin-left scale-x-0 group-hover:scale-x-100",
                 isRed ? "bg-destructive" :
@@ -167,11 +243,16 @@ export default function Home() {
                   </div>
                   
                   <div className="flex flex-col gap-1 min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <h2 className="font-semibold text-base text-card-foreground truncate">{repo.name}</h2>
                       {isRed && (
                         <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20">
                           Faalt
+                        </span>
+                      )}
+                      {repo.recoveredAfterRetry && !isRed && (
+                        <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-500 ring-1 ring-inset ring-emerald-500/20">
+                          Hersteld na herhaling
                         </span>
                       )}
                     </div>

@@ -143,7 +143,7 @@ interface GhCommitDetail {
   }>;
 }
 
-interface GhWorkflowRun {
+export interface GhWorkflowRun {
   id: number;
   name: string | null;
   display_title: string;
@@ -151,6 +151,7 @@ interface GhWorkflowRun {
   conclusion: string | null; // success | failure | cancelled | ...
   html_url: string;
   updated_at: string;
+  run_attempt?: number;
 }
 
 interface GhJob {
@@ -179,6 +180,8 @@ export interface RepoSummary {
   failReason: string | null;
   htmlUrl: string | null;
   anomaly: Anomaly | null;
+  /** True when the latest check succeeded only after an automatic retry. */
+  recoveredAfterRetry: boolean;
 }
 
 export interface CheckRunInfo {
@@ -225,7 +228,7 @@ export function plainFailReason(names: string[]): string {
   return first ? `controle "${first}" faalt` : "controle faalt";
 }
 
-async function latestRuns(repo: string, count: number): Promise<GhWorkflowRun[]> {
+export async function latestRuns(repo: string, count: number): Promise<GhWorkflowRun[]> {
   const org = githubOrg();
   const data = await ghJson<{ workflow_runs: GhWorkflowRun[] }>(
     `/repos/${org}/${repo}/actions/runs?per_page=${count}`,
@@ -233,7 +236,7 @@ async function latestRuns(repo: string, count: number): Promise<GhWorkflowRun[]>
   return data.workflow_runs ?? [];
 }
 
-async function failedJobNames(repo: string, runId: number): Promise<string[]> {
+export async function failedJobNames(repo: string, runId: number): Promise<string[]> {
   const org = githubOrg();
   try {
     const data = await ghJson<{ jobs: GhJob[] }>(
@@ -302,6 +305,17 @@ async function fetchRepoSummary(repo: string): Promise<RepoSummary> {
     failReason = plainFailReason(names);
   }
 
+  let recoveredAfterRetry = false;
+  if (status === "green" && latest && (latest.run_attempt ?? 1) > 1) {
+    const { wasRecoveredAfterRetry } = await import("./selfheal.js");
+    recoveredAfterRetry = await wasRecoveredAfterRetry(
+      repo,
+      latest.id,
+      latest.run_attempt,
+      latest.conclusion,
+    );
+  }
+
   return {
     name: repo,
     status,
@@ -310,10 +324,73 @@ async function fetchRepoSummary(repo: string): Promise<RepoSummary> {
     failReason,
     htmlUrl: repoInfo?.html_url ?? null,
     anomaly,
+    recoveredAfterRetry,
   };
 }
 export function repoSummary(repo: string, bypass = false): Promise<RepoSummary> {
   return withCache(`summary:${repo}`, bypass, () => fetchRepoSummary(repo));
+}
+
+/**
+ * The single deliberate exception to "read-only": re-running an existing
+ * GitHub Actions check. This never changes code, settings, or deployments —
+ * it only asks GitHub to execute the same check again. Requires the token
+ * to have actions:write; a 403 is reported as a plain-language error.
+ */
+export async function rerunFailedJobs(
+  repo: string,
+  runId: number,
+): Promise<{ ok: boolean; message: string }> {
+  const org = githubOrg();
+  const token = requiredEnv("GITHUB_TOKEN");
+  const res = await fetch(
+    `${GITHUB_API}/repos/${org}/${repo}/actions/runs/${runId}/rerun-failed-jobs`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    },
+  );
+  if (res.status === 201) {
+    return { ok: true, message: "Controle opnieuw gestart op GitHub." };
+  }
+  if (res.status === 403) {
+    return {
+      ok: false,
+      message:
+        "GitHub weigerde de herstart: het token heeft alleen leesrechten (actions:write ontbreekt).",
+    };
+  }
+  return {
+    ok: false,
+    message: `GitHub weigerde de herstart (status ${res.status}).`,
+  };
+}
+
+/** First N error-looking lines from the failed job's log of a run. */
+export async function failedRunErrorLines(
+  repo: string,
+  runId: number,
+  max = 40,
+): Promise<string[]> {
+  const org = githubOrg();
+  try {
+    const data = await ghJson<{ jobs: GhJob[] }>(
+      `/repos/${org}/${repo}/actions/runs/${runId}/jobs?per_page=50`,
+    );
+    const failedJob = (data.jobs ?? []).find((j) => j.conclusion === "failure");
+    if (!failedJob) return [];
+    const logRes = await ghFetch(
+      `/repos/${org}/${repo}/actions/jobs/${failedJob.id}/logs`,
+    );
+    if (!logRes.ok) return [];
+    return extractErrorLines(await logRes.text(), max);
+  } catch {
+    return [];
+  }
 }
 
 /** First N lines of a job log that look like errors. */

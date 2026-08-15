@@ -34,7 +34,8 @@ export const ListReposResponseItem = zod.object({
   "fileName": zod.string(),
   "linesChanged": zod.number().describe('Total lines added plus deleted for the file in this commit'),
   "commitUrl": zod.string()
-}),zod.null()]).optional()
+}),zod.null()]).optional(),
+  "recoveredAfterRetry": zod.boolean().optional().describe('True when the latest check succeeded only after an automatic retry (\"hersteld na herhaling\")')
 })
 export const ListReposResponse = zod.array(ListReposResponseItem)
 
@@ -77,6 +78,69 @@ export const GetNotificationSettingsResponse = zod.object({
   "enabled": zod.boolean().describe('Whether Slack notifications are active'),
   "slackWebhookConfigured": zod.boolean().describe('True when a Slack webhook URL has been saved (URL itself is never returned)'),
   "updatedAt": zod.coerce.date().nullish()
+})
+
+
+/**
+ * Returns one row per monitored expiring item (GitHub tokens, TLS certificates, Azure client key, domain renewals). Items that cannot be read are returned with severity "unknown" and a reason — never as ok.
+ * @summary List upcoming expirations
+ */
+export const ListExpiryItemsQueryParams = zod.object({
+  "refresh": zod.coerce.string().optional()
+})
+
+export const ListExpiryItemsResponseItem = zod.object({
+  "id": zod.string(),
+  "label": zod.string().describe('Human-readable name of the expiring item (Dutch)'),
+  "category": zod.enum(['github_token', 'tls_certificate', 'azure_key', 'domain']),
+  "expiresAt": zod.coerce.date().nullish(),
+  "daysLeft": zod.number().nullish().describe('Whole days until expiry (negative when already expired)'),
+  "severity": zod.enum(['red', 'orange', 'ok', 'unknown']).describe('red = expires within 7 days, orange = within 30 days, ok = later, unknown = could not be read'),
+  "consequence": zod.string().describe('Plain-language description of what breaks when this expires'),
+  "unknownReason": zod.string().nullish().describe('Why the expiry could not be read (only when severity is unknown)')
+})
+export const ListExpiryItemsResponse = zod.array(ListExpiryItemsResponseItem)
+
+
+/**
+ * Returns the most recent automatic self-heal actions and manually approved actions, newest first.
+ * @summary Action log of automatic and one-tap actions
+ */
+export const ListActionLogResponseItem = zod.object({
+  "id": zod.number(),
+  "action": zod.string().describe('Plain-language description of what was done'),
+  "repo": zod.string().nullish(),
+  "reason": zod.string().describe('Why the action was taken'),
+  "outcome": zod.string().describe('Plain-language result of the action'),
+  "createdAt": zod.coerce.date()
+})
+export const ListActionLogResponse = zod.array(ListActionLogResponseItem)
+
+
+/**
+ * Proposals the beheercentrum knows how to execute but that require an explicit decision. Nothing is executed until the matching execute endpoint is called.
+ * @summary List one-tap repair proposals
+ */
+export const ListProposalsResponseItem = zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "description": zod.string().describe('Plain-language description of the problem'),
+  "actionDescription": zod.string().describe('Exactly what will happen when the button is pressed'),
+  "repo": zod.string().nullish()
+})
+export const ListProposalsResponse = zod.array(ListProposalsResponseItem)
+
+
+/**
+ * @summary Execute a proposal after explicit user approval
+ */
+export const ExecuteProposalParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ExecuteProposalResponse = zod.object({
+  "success": zod.boolean(),
+  "message": zod.string().describe('Plain-language outcome message (Dutch)')
 })
 
 

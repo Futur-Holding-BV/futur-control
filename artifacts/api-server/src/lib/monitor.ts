@@ -27,8 +27,9 @@
 
 import { pool, db, repoStatusSnapshots } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
-import { MONITORED_REPOS, repoSummary, type Status, type Anomaly } from "./github.js";
+import { listMonitoredRepos, repoSummary, type Status, type Anomaly } from "./github.js";
 import { notifyRepoRed, notifyAnomaly } from "./notifications.js";
+import { maybeAutoRetry, settleRecovery } from "./selfheal.js";
 import { logger } from "./logger.js";
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -151,14 +152,22 @@ async function checkRepo(repoName: string): Promise<void> {
   //    not already red (prevents re-alerting on a stable red repo).
   if (summary.status === "red" && notifiedStatus !== "red") {
     logger.info({ repo: repoName, notifiedStatus }, "Statusovergang naar rood gedetecteerd");
-    // Attempt Slack delivery FIRST.  The fetch has a bounded timeout so it
-    // cannot stall the advisory lock indefinitely.
-    const delivered = await notifyRepoRed(summary);
-    if (delivered) {
-      newNotifiedStatus = "red";
+
+    // Self-heal: when the failure looks like a temporary hiccup, retry the
+    // check ONCE automatically and hold back the red notification until the
+    // retry has concluded. If the retry fails, the repo stays red on the
+    // next poll and the notification goes out then.
+    const retryStarted = await maybeAutoRetry(repoName);
+    if (!retryStarted) {
+      // Attempt Slack delivery FIRST.  The fetch has a bounded timeout so it
+      // cannot stall the advisory lock indefinitely.
+      const delivered = await notifyRepoRed(summary);
+      if (delivered) {
+        newNotifiedStatus = "red";
+      }
+      // If delivery failed: newNotifiedStatus stays at its old value.
+      // Next poll will detect the same red transition and retry.
     }
-    // If delivery failed: newNotifiedStatus stays at its old value.
-    // Next poll will detect the same red transition and retry.
   } else if (summary.status === "green" && notifiedStatus === "red") {
     // Confirmed recovery (green only): reset so the next red→green→red cycle
     // produces a fresh alert.
@@ -166,6 +175,12 @@ async function checkRepo(repoName: string): Promise<void> {
     // because gray is not a recovery — resetting on gray would cause a
     // duplicate alert on the subsequent red poll when the workflow completes.
     newNotifiedStatus = "green";
+  }
+
+  // Settle a pending automatic retry: when the repo is green thanks to a
+  // retried run, mark the log entry "hersteld na herhaling".
+  if (summary.status === "green") {
+    await settleRecovery(repoName);
   }
 
   // 4. New anomaly?
@@ -201,7 +216,8 @@ async function pollAll(): Promise<void> {
     lockClient = client;
 
     logger.debug("Monitor: start controle van alle repositories");
-    for (const repo of MONITORED_REPOS) {
+    const repos = await listMonitoredRepos();
+    for (const repo of repos) {
       await checkRepo(repo);
     }
     logger.debug("Monitor: controle afgerond");

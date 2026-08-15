@@ -6,19 +6,28 @@
  * OpenAPI spec version: 0.1.0
  */
 import {
+  useMutation,
   useQuery
 } from '@tanstack/react-query';
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult
 } from '@tanstack/react-query';
 
 import type {
+  ActionLogEntry,
+  ActionResult,
   ApiErrorMessage,
+  ExpiryItem,
   HealthStatus,
+  ListExpiryItemsParams,
   NotificationSettings,
+  Proposal,
   RepoDetail,
   RepoSummary
 } from './api.schemas';
@@ -361,4 +370,316 @@ export function useGetNotificationSettings<TData = Awaited<ReturnType<typeof get
 
 
 
+
+export const getListExpiryItemsUrl = (params?: ListExpiryItemsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/expiry?${stringifiedParams}` : `/api/expiry`
+}
+
+/**
+ * Returns one row per monitored expiring item (GitHub tokens, TLS certificates, Azure client key, domain renewals). Items that cannot be read are returned with severity "unknown" and a reason — never as ok.
+ * @summary List upcoming expirations
+ */
+export const listExpiryItems = async (params?: ListExpiryItemsParams, options?: Parameters<typeof customFetch>[1]): Promise<ExpiryItem[]> => {
+
+  return customFetch<ExpiryItem[]>(getListExpiryItemsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListExpiryItemsQueryKey = (params?: ListExpiryItemsParams,) => {
+    return [
+    `/api/expiry`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListExpiryItemsQueryOptions = <TData = Awaited<ReturnType<typeof listExpiryItems>>, TError = ErrorType<unknown>>(params?: ListExpiryItemsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listExpiryItems>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListExpiryItemsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listExpiryItems>>> = ({ signal }) => listExpiryItems(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listExpiryItems>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListExpiryItemsQueryResult = NonNullable<Awaited<ReturnType<typeof listExpiryItems>>>
+export type ListExpiryItemsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List upcoming expirations
+ */
+
+export function useListExpiryItems<TData = Awaited<ReturnType<typeof listExpiryItems>>, TError = ErrorType<unknown>>(
+ params?: ListExpiryItemsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listExpiryItems>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListExpiryItemsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListActionLogUrl = () => {
+
+
+
+
+  return `/api/actions/log`
+}
+
+/**
+ * Returns the most recent automatic self-heal actions and manually approved actions, newest first.
+ * @summary Action log of automatic and one-tap actions
+ */
+export const listActionLog = async ( options?: Parameters<typeof customFetch>[1]): Promise<ActionLogEntry[]> => {
+
+  return customFetch<ActionLogEntry[]>(getListActionLogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListActionLogQueryKey = () => {
+    return [
+    `/api/actions/log`
+    ] as const;
+    }
+
+
+export const getListActionLogQueryOptions = <TData = Awaited<ReturnType<typeof listActionLog>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listActionLog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListActionLogQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listActionLog>>> = ({ signal }) => listActionLog({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listActionLog>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListActionLogQueryResult = NonNullable<Awaited<ReturnType<typeof listActionLog>>>
+export type ListActionLogQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Action log of automatic and one-tap actions
+ */
+
+export function useListActionLog<TData = Awaited<ReturnType<typeof listActionLog>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listActionLog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListActionLogQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListProposalsUrl = () => {
+
+
+
+
+  return `/api/actions/proposals`
+}
+
+/**
+ * Proposals the beheercentrum knows how to execute but that require an explicit decision. Nothing is executed until the matching execute endpoint is called.
+ * @summary List one-tap repair proposals
+ */
+export const listProposals = async ( options?: Parameters<typeof customFetch>[1]): Promise<Proposal[]> => {
+
+  return customFetch<Proposal[]>(getListProposalsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListProposalsQueryKey = () => {
+    return [
+    `/api/actions/proposals`
+    ] as const;
+    }
+
+
+export const getListProposalsQueryOptions = <TData = Awaited<ReturnType<typeof listProposals>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProposals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListProposalsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProposals>>> = ({ signal }) => listProposals({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listProposals>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListProposalsQueryResult = NonNullable<Awaited<ReturnType<typeof listProposals>>>
+export type ListProposalsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List one-tap repair proposals
+ */
+
+export function useListProposals<TData = Awaited<ReturnType<typeof listProposals>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProposals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListProposalsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExecuteProposalUrl = (id: string,) => {
+
+
+
+
+  return `/api/actions/proposals/${id}/execute`
+}
+
+/**
+ * @summary Execute a proposal after explicit user approval
+ */
+export const executeProposal = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<ActionResult> => {
+
+  return customFetch<ActionResult>(getExecuteProposalUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getExecuteProposalMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof executeProposal>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof executeProposal>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['executeProposal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof executeProposal>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  executeProposal(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ExecuteProposalMutationResult = NonNullable<Awaited<ReturnType<typeof executeProposal>>>
+
+    export type ExecuteProposalMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Execute a proposal after explicit user approval
+ */
+export const useExecuteProposal = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof executeProposal>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof executeProposal>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getExecuteProposalMutationOptions(options));
+    }
 

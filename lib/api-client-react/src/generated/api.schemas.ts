@@ -5,6 +5,82 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type ExpiryItemCategory = typeof ExpiryItemCategory[keyof typeof ExpiryItemCategory];
+
+
+export const ExpiryItemCategory = {
+  github_token: 'github_token',
+  tls_certificate: 'tls_certificate',
+  azure_key: 'azure_key',
+  domain: 'domain',
+} as const;
+
+/**
+ * red = expires within 7 days, orange = within 30 days, ok = later, unknown = could not be read
+ */
+export type ExpiryItemSeverity = typeof ExpiryItemSeverity[keyof typeof ExpiryItemSeverity];
+
+
+export const ExpiryItemSeverity = {
+  red: 'red',
+  orange: 'orange',
+  ok: 'ok',
+  unknown: 'unknown',
+} as const;
+
+export interface ExpiryItem {
+  id: string;
+  /** Human-readable name of the expiring item (Dutch) */
+  label: string;
+  category: ExpiryItemCategory;
+  /** @nullable */
+  expiresAt?: string | null;
+  /**
+     * Whole days until expiry (negative when already expired)
+     * @nullable
+     */
+  daysLeft?: number | null;
+  /** red = expires within 7 days, orange = within 30 days, ok = later, unknown = could not be read */
+  severity: ExpiryItemSeverity;
+  /** Plain-language description of what breaks when this expires */
+  consequence: string;
+  /**
+     * Why the expiry could not be read (only when severity is unknown)
+     * @nullable
+     */
+  unknownReason?: string | null;
+}
+
+export interface ActionLogEntry {
+  id: number;
+  /** Plain-language description of what was done */
+  action: string;
+  /** @nullable */
+  repo?: string | null;
+  /** Why the action was taken */
+  reason: string;
+  /** Plain-language result of the action */
+  outcome: string;
+  createdAt: string;
+}
+
+export interface Proposal {
+  id: string;
+  title: string;
+  /** Plain-language description of the problem */
+  description: string;
+  /** Exactly what will happen when the button is pressed */
+  actionDescription: string;
+  /** @nullable */
+  repo?: string | null;
+}
+
+export interface ActionResult {
+  success: boolean;
+  /** Plain-language outcome message (Dutch) */
+  message: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -53,6 +129,8 @@ export interface RepoSummary {
      */
   htmlUrl?: string | null;
   anomaly?: AnomalyAlert | null;
+  /** True when the latest check succeeded only after an automatic retry ("hersteld na herhaling") */
+  recoveredAfterRetry?: boolean;
 }
 
 export type CheckRunStatus = typeof CheckRunStatus[keyof typeof CheckRunStatus];
@@ -118,4 +196,8 @@ export interface NotificationSettings {
   /** @nullable */
   updatedAt?: string | null;
 }
+
+export type ListExpiryItemsParams = {
+refresh?: string;
+};
 

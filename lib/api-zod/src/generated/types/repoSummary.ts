@@ -27,4 +27,6 @@ export interface RepoSummary {
      */
   htmlUrl?: string | null;
   anomaly?: AnomalyAlert | null;
+  /** True when the latest check succeeded only after an automatic retry ("hersteld na herhaling") */
+  recoveredAfterRetry?: boolean;
 }

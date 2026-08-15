@@ -14,6 +14,10 @@ tags:
     description: Read-only GitHub repository status
   - name: notifications
     description: Notification settings
+  - name: expiry
+    description: Upcoming expirations (tokens, certificates, keys, domains)
+  - name: actions
+    description: Self-heal action log and one-tap proposals
 paths:
   /healthz:
     get:
@@ -96,8 +100,165 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotificationSettings"
+  /expiry:
+    get:
+      operationId: listExpiryItems
+      tags: [expiry]
+      summary: List upcoming expirations
+      description: >
+        Returns one row per monitored expiring item (GitHub tokens, TLS
+        certificates, Azure client key, domain renewals). Items that cannot
+        be read are returned with severity "unknown" and a reason — never as ok.
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Expiry items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExpiryItem"
+  /actions/log:
+    get:
+      operationId: listActionLog
+      tags: [actions]
+      summary: Action log of automatic and one-tap actions
+      description: Returns the most recent automatic self-heal actions and manually approved actions, newest first.
+      responses:
+        "200":
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActionLogEntry"
+  /actions/proposals:
+    get:
+      operationId: listProposals
+      tags: [actions]
+      summary: List one-tap repair proposals
+      description: Proposals the beheercentrum knows how to execute but that require an explicit decision. Nothing is executed until the matching execute endpoint is called.
+      responses:
+        "200":
+          description: Proposals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Proposal"
+  /actions/proposals/{id}/execute:
+    post:
+      operationId: executeProposal
+      tags: [actions]
+      summary: Execute a proposal after explicit user approval
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Result of the executed action
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+        "404":
+          description: Proposal not found (may have become stale)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+        "502":
+          description: GitHub API error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
 components:
   schemas:
+    ExpiryItem:
+      type: object
+      required: [id, label, category, severity, consequence]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+          description: Human-readable name of the expiring item (Dutch)
+        category:
+          type: string
+          enum: [github_token, tls_certificate, azure_key, domain]
+        expiresAt:
+          type: ["string", "null"]
+          format: date-time
+        daysLeft:
+          type: ["number", "null"]
+          description: Whole days until expiry (negative when already expired)
+        severity:
+          type: string
+          enum: [red, orange, ok, unknown]
+          description: red = expires within 7 days, orange = within 30 days, ok = later, unknown = could not be read
+        consequence:
+          type: string
+          description: Plain-language description of what breaks when this expires
+        unknownReason:
+          type: ["string", "null"]
+          description: Why the expiry could not be read (only when severity is unknown)
+    ActionLogEntry:
+      type: object
+      required: [id, action, reason, outcome, createdAt]
+      properties:
+        id:
+          type: number
+        action:
+          type: string
+          description: Plain-language description of what was done
+        repo:
+          type: ["string", "null"]
+        reason:
+          type: string
+          description: Why the action was taken
+        outcome:
+          type: string
+          description: Plain-language result of the action
+        createdAt:
+          type: string
+          format: date-time
+    Proposal:
+      type: object
+      required: [id, title, description, actionDescription]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+          description: Plain-language description of the problem
+        actionDescription:
+          type: string
+          description: Exactly what will happen when the button is pressed
+        repo:
+          type: ["string", "null"]
+    ActionResult:
+      type: object
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+          description: Plain-language outcome message (Dutch)
     HealthStatus:
       type: object
       properties:
@@ -136,6 +297,9 @@ components:
           oneOf:
             - $ref: "#/components/schemas/AnomalyAlert"
             - type: "null"
+        recoveredAfterRetry:
+          type: boolean
+          description: True when the latest check succeeded only after an automatic retry ("hersteld na herhaling")
     AnomalyAlert:
       type: object
       required: [commitSha, commitTitle, fileName, linesChanged, commitUrl]

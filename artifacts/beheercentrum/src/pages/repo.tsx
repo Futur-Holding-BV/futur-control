@@ -1,5 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useGetRepoDetail, getGetRepoDetailQueryKey } from "@workspace/api-client-react";
+import { 
+  useGetRepoDetail, 
+  getGetRepoDetailQueryKey,
+  useListRepos,
+  useListProposals
+} from "@workspace/api-client-react";
 import { useParams, Link } from "wouter";
 import { 
   ArrowLeft, 
@@ -15,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatExactDate, formatTimeAgo, cn } from "@/lib/utils";
+import { ProposalCard } from "@/components/proposal-card";
 import type { CheckRun } from "@workspace/api-client-react";
 
 function CheckStatusIcon({ status, className }: { status: "green" | "red" | "gray", className?: string }) {
@@ -29,6 +35,12 @@ export default function RepoDetail() {
   const queryClient = useQueryClient();
 
   const { data: repo, isLoading, isError, error, isRefetching } = useGetRepoDetail(name);
+  const { data: repos } = useListRepos();
+  const { data: proposals } = useListProposals();
+
+  const repoSummary = repos?.find(r => r.name === name);
+  const recoveredAfterRetry = repoSummary?.recoveredAfterRetry;
+  const repoProposals = proposals?.filter(p => p.repo === name) || [];
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: getGetRepoDetailQueryKey(name) });
@@ -94,16 +106,21 @@ export default function RepoDetail() {
               <ArrowLeft className="h-5 w-5" />
             </Link>
           </Button>
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-3">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
               <Button variant="ghost" size="icon" asChild className="rounded-full hover:bg-accent -ml-2 text-muted-foreground shrink-0 sm:hidden">
                 <Link href="/">
                   <ArrowLeft className="h-5 w-5" />
                 </Link>
               </Button>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground flex items-center gap-3">
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground flex flex-wrap items-center gap-3">
                 {repo.name}
               </h1>
+              {recoveredAfterRetry && repo.status === 'green' && (
+                <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-500 ring-1 ring-inset ring-emerald-500/20">
+                  Hersteld na herhaling
+                </span>
+              )}
             </div>
             
             <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground pl-0 sm:pl-0">
@@ -184,6 +201,18 @@ export default function RepoDetail() {
           </div>
         </div>
       </div>
+
+      {/* Proposals Section */}
+      {repoProposals.length > 0 && (
+        <div className="flex flex-col gap-4 animate-in slide-in-from-bottom-2 duration-500">
+          <h3 className="font-semibold text-lg text-primary">Voorgestelde acties</h3>
+          <div className="grid grid-cols-1 gap-3">
+            {repoProposals.map(proposal => (
+              <ProposalCard key={proposal.id} proposal={proposal} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Log Output for Failed Check */}
       {isRed && repo.failedCheck && (

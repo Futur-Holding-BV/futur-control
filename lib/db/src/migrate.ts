@@ -42,6 +42,30 @@ export async function ensureTablesExist(): Promise<void> {
       ALTER TABLE repo_status_snapshots
         DROP COLUMN IF EXISTS last_notified_at
     `);
+
+    // ── action_log ──────────────────────────────────────────────────────────
+    // Audit log of automatic self-heal actions and manually approved
+    // one-tap actions (GitHub Actions re-runs only; never code changes).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS action_log (
+        id         SERIAL PRIMARY KEY,
+        kind       TEXT NOT NULL,
+        action     TEXT NOT NULL,
+        repo       TEXT,
+        run_id     TEXT,
+        reason     TEXT NOT NULL,
+        outcome    TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // Guarantees "at most one automatic retry per run" even under
+    // concurrent monitor cycles: the log INSERT acts as an atomic claim.
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS action_log_auto_retry_unique
+        ON action_log (repo, run_id)
+        WHERE kind = 'auto_retry'
+    `);
   } finally {
     client.release();
   }

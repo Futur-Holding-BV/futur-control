@@ -6,13 +6,20 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './actionLogEntry';
+export * from './actionResult';
 export * from './anomalyAlert';
 export * from './apiErrorMessage';
 export * from './checkRun';
 export * from './checkRunStatus';
+export * from './expiryItem';
+export * from './expiryItemCategory';
+export * from './expiryItemSeverity';
 export * from './failedCheckDetail';
 export * from './healthStatus';
+export * from './listExpiryItemsParams';
 export * from './notificationSettings';
+export * from './proposal';
 export * from './repoDetail';
 export * from './repoDetailStatus';
 export * from './repoSummary';
