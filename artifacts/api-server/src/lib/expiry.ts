@@ -203,7 +203,7 @@ async function azureItem(): Promise<ExpiryItem> {
   if (!tenantId || !clientId || !clientSecret) {
     return unknown(
       base,
-      "geen Azure-toegang geconfigureerd — vul AZURE_TENANT_ID, AZURE_CLIENT_ID en AZURE_CLIENT_SECRET (leesrechten Application.Read.All volstaan)",
+      "bewust niet aangesloten — de Azure-sleutel geeft toegang tot de postbussen en wordt daarom niet in dit project bewaard; houd de einddatum in Azure zelf in de gaten",
     );
   }
   try {

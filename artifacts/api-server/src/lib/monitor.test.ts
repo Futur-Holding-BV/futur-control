@@ -14,8 +14,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Module mocks — must be declared before any dynamic imports.
 // ---------------------------------------------------------------------------
 
+const lockClient = {
+  query: vi.fn(async (text: string) => {
+    if (text.includes("pg_try_advisory_lock")) return { rows: [{ acquired: true }] };
+    return { rows: [] };
+  }),
+  release: vi.fn(),
+};
+
 vi.mock("@workspace/db", () => ({
-  pool: {},
+  pool: { connect: vi.fn(async () => lockClient) },
   db: {
     select: vi.fn(),
     insert: vi.fn(),
@@ -33,20 +41,26 @@ vi.mock("./logger.js", () => ({
 }));
 
 vi.mock("./github.js", () => ({
-  listMonitoredRepos: vi.fn(),
+  listMonitoredRepos: vi.fn(async () => ["fps-api"]),
   repoSummary: vi.fn(),
 }));
 
 vi.mock("./notifications.js", () => ({
   notifyRepoRed: vi.fn(),
+  notifyMultipleReposRed: vi.fn(),
   notifyAnomaly: vi.fn(),
+}));
+
+vi.mock("./selfheal.js", () => ({
+  maybeAutoRetry: vi.fn(async () => false),
+  settleRecovery: vi.fn(async () => false),
 }));
 
 // ---------------------------------------------------------------------------
 // Imports (after mocks so the mocked versions are used)
 // ---------------------------------------------------------------------------
 
-import { checkRepo } from "./monitor.js";
+import { pollAll } from "./monitor.js";
 import { repoSummary } from "./github.js";
 import { notifyRepoRed, notifyAnomaly } from "./notifications.js";
 import { db } from "@workspace/db";
@@ -67,6 +81,7 @@ function makeSummary(overrides: Partial<RepoSummary> = {}): RepoSummary {
     failReason: null,
     htmlUrl: "https://github.com/fps/fps-api",
     anomaly: null,
+    recoveredAfterRetry: false,
     ...overrides,
   };
 }
@@ -107,7 +122,7 @@ function mockSnapshot(snapshot: {
 // Tests: status transition detection
 // ---------------------------------------------------------------------------
 
-describe("checkRepo — status transition detection", () => {
+describe("pollAll — status transition detection", () => {
   beforeEach(() => {
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
     vi.mocked(notifyAnomaly).mockResolvedValue(true);
@@ -121,7 +136,7 @@ describe("checkRepo — status transition detection", () => {
     mockSnapshot({ status: "red", notifiedStatus: "red", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "tests falen" }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyRepoRed).not.toHaveBeenCalled();
   });
@@ -130,7 +145,7 @@ describe("checkRepo — status transition detection", () => {
     mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "tests falen" }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyRepoRed).toHaveBeenCalledOnce();
     expect(notifyRepoRed).toHaveBeenCalledWith(expect.objectContaining({ name: repoName, status: "red" }));
@@ -141,7 +156,7 @@ describe("checkRepo — status transition detection", () => {
     mockSnapshot(null);
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "build faalt" }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyRepoRed).toHaveBeenCalledOnce();
   });
@@ -150,7 +165,7 @@ describe("checkRepo — status transition detection", () => {
     mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "gray" }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyRepoRed).not.toHaveBeenCalled();
   });
@@ -160,7 +175,7 @@ describe("checkRepo — status transition detection", () => {
     mockSnapshot({ status: "red", notifiedStatus: "red", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "gray" }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     // notifyRepoRed must NOT be called (gray is not a transition we alert on)
     expect(notifyRepoRed).not.toHaveBeenCalled();
@@ -175,7 +190,7 @@ describe("checkRepo — status transition detection", () => {
     mockSnapshot({ status: "red", notifiedStatus: "red", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "green" }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyRepoRed).not.toHaveBeenCalled();
 
@@ -189,7 +204,7 @@ describe("checkRepo — status transition detection", () => {
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red", failReason: "lint faalt" }));
     vi.mocked(notifyRepoRed).mockResolvedValue(false); // delivery failure
 
-    await checkRepo(repoName);
+    await pollAll();
 
     const insertMock = vi.mocked(db.insert).mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };
     const savedValues = insertMock.values.mock.calls[0]?.[0] as Record<string, unknown>;
@@ -202,7 +217,7 @@ describe("checkRepo — status transition detection", () => {
 // Tests: anomaly detection
 // ---------------------------------------------------------------------------
 
-describe("checkRepo — anomaly notification", () => {
+describe("pollAll — anomaly notification", () => {
   beforeEach(() => {
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
     vi.mocked(notifyAnomaly).mockResolvedValue(true);
@@ -216,7 +231,7 @@ describe("checkRepo — anomaly notification", () => {
     mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyAnomaly).toHaveBeenCalledOnce();
     expect(notifyAnomaly).toHaveBeenCalledWith(
@@ -234,7 +249,7 @@ describe("checkRepo — anomaly notification", () => {
     });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyAnomaly).not.toHaveBeenCalled();
   });
@@ -249,7 +264,7 @@ describe("checkRepo — anomaly notification", () => {
       makeSummary({ anomaly: { ...exampleAnomaly, commitSha: "new-sha" } }),
     );
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyAnomaly).toHaveBeenCalledOnce();
   });
@@ -259,7 +274,7 @@ describe("checkRepo — anomaly notification", () => {
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
     vi.mocked(notifyAnomaly).mockResolvedValue(false);
 
-    await checkRepo(repoName);
+    await pollAll();
 
     const insertMock = vi.mocked(db.insert).mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };
     const savedValues = insertMock.values.mock.calls[0]?.[0] as Record<string, unknown>;
@@ -270,7 +285,7 @@ describe("checkRepo — anomaly notification", () => {
     mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: null }));
 
-    await checkRepo(repoName);
+    await pollAll();
 
     expect(notifyAnomaly).not.toHaveBeenCalled();
   });
@@ -280,7 +295,7 @@ describe("checkRepo — anomaly notification", () => {
 // Tests: GitHub errors are swallowed gracefully
 // ---------------------------------------------------------------------------
 
-describe("checkRepo — GitHub error handling", () => {
+describe("pollAll — GitHub error handling", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -289,7 +304,7 @@ describe("checkRepo — GitHub error handling", () => {
     vi.mocked(repoSummary).mockRejectedValue(new Error("GitHub 503"));
 
     // Should not throw
-    await expect(checkRepo(repoName)).resolves.toBeUndefined();
+    await expect(pollAll()).resolves.toBeUndefined();
     expect(notifyRepoRed).not.toHaveBeenCalled();
   });
 });

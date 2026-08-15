@@ -24,6 +24,7 @@ const redSummary: RepoSummary = {
   failReason: "tests falen",
   htmlUrl: "https://github.com/fps/fps-api",
   anomaly: null,
+  recoveredAfterRetry: false,
 };
 
 const anomaly: Anomaly = {

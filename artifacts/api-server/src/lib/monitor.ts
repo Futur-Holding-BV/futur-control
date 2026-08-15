@@ -192,7 +192,8 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
 // Poll cycle (guarded by advisory lock)
 // ---------------------------------------------------------------------------
 
-async function pollAll(): Promise<void> {
+/** Exported for unit-testing only. */
+export async function pollAll(): Promise<void> {
   let lockClient: PgPoolClient | null = null;
   try {
     const { client, acquired } = await tryAcquireAdvisoryLock();
