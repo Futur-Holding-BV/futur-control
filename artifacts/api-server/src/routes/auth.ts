@@ -3,8 +3,11 @@ import {
   SESSION_COOKIE,
   adminPassword,
   createSessionToken,
+  loginBlockedMs,
   passwordMatches,
+  recordFailedLogin,
   requireAuth,
+  resetLoginCounter,
   sessionCookieOptions,
 } from "../lib/auth.js";
 
@@ -18,11 +21,33 @@ router.post("/auth/login", (req, res) => {
     });
     return;
   }
-  const password = typeof req.body?.password === "string" ? req.body.password : "";
-  if (!passwordMatches(password)) {
-    res.status(401).json({ error: "Onjuist wachtwoord." });
+
+  // Brute-force check
+  const ip = req.ip ?? "unknown";
+  const blockedMs = loginBlockedMs(ip);
+  if (blockedMs > 0) {
+    const secLeft = Math.ceil(blockedMs / 1000);
+    res.status(429).json({
+      error: `Te veel mislukte inlogpogingen. Probeer het over ${secLeft} seconde${secLeft === 1 ? "" : "n"} opnieuw.`,
+    });
     return;
   }
+
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!passwordMatches(password)) {
+    const nowBlockedMs = recordFailedLogin(ip);
+    if (nowBlockedMs > 0) {
+      const secLeft = Math.ceil(nowBlockedMs / 1000);
+      res.status(429).json({
+        error: `Te veel mislukte inlogpogingen. Probeer het over ${secLeft} seconde${secLeft === 1 ? "" : "n"} opnieuw.`,
+      });
+    } else {
+      res.status(401).json({ error: "Onjuist wachtwoord." });
+    }
+    return;
+  }
+
+  resetLoginCounter(ip);
   const token = createSessionToken();
   if (!token) {
     res.status(503).json({ error: "De inlog is nog niet ingericht (SESSION_SECRET ontbreekt)." });

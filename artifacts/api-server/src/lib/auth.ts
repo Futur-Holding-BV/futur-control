@@ -1,6 +1,57 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 
+// ---------------------------------------------------------------------------
+// Brute-force protection: per-IP failed-login counter
+// ---------------------------------------------------------------------------
+
+const MAX_FAILURES = 5;
+const WINDOW_MS = 60_000; // 1 minute
+const BLOCK_MS = 60_000;  // lock-out duration after exceeding limit
+
+interface FailEntry {
+  count: number;
+  windowStart: number;
+  blockedUntil: number;
+}
+
+const failMap = new Map<string, FailEntry>();
+
+/** Returns the number of milliseconds the IP is still blocked, or 0 if free. */
+export function loginBlockedMs(ip: string): number {
+  const entry = failMap.get(ip);
+  if (!entry) return 0;
+  const now = Date.now();
+  if (entry.blockedUntil > now) return entry.blockedUntil - now;
+  // Window expired → clean up
+  if (now - entry.windowStart >= WINDOW_MS) {
+    failMap.delete(ip);
+    return 0;
+  }
+  return 0;
+}
+
+/** Record a failed login for the given IP. Returns remaining block ms (>0 if now blocked). */
+export function recordFailedLogin(ip: string): number {
+  const now = Date.now();
+  let entry = failMap.get(ip);
+  if (!entry || now - entry.windowStart >= WINDOW_MS) {
+    entry = { count: 0, windowStart: now, blockedUntil: 0 };
+    failMap.set(ip, entry);
+  }
+  entry.count += 1;
+  if (entry.count >= MAX_FAILURES) {
+    entry.blockedUntil = now + BLOCK_MS;
+    return BLOCK_MS;
+  }
+  return 0;
+}
+
+/** Reset the counter after a successful login. */
+export function resetLoginCounter(ip: string): void {
+  failMap.delete(ip);
+}
+
 export const SESSION_COOKIE = "fps_sessie";
 const SESSION_DAYS = 30;
 

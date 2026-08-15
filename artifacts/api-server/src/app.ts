@@ -9,6 +9,10 @@ import { ensureTablesExist } from "@workspace/db";
 
 const app: Express = express();
 
+// Trust the single reverse-proxy hop in front of this server (Replit's router)
+// so that req.ip resolves to the originating client IP via X-Forwarded-For.
+app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,

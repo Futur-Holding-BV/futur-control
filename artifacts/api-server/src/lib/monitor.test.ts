@@ -63,7 +63,7 @@ vi.mock("./selfheal.js", () => ({
 // Imports (after mocks so the mocked versions are used)
 // ---------------------------------------------------------------------------
 
-import { pollAll } from "./monitor.js";
+import { pollAll, checkRepo } from "./monitor.js";
 import { repoSummary } from "./github.js";
 import { notifyRepoRed, notifyRepoRedReminder, notifyAnomaly } from "./notifications.js";
 import { db } from "@workspace/db";
