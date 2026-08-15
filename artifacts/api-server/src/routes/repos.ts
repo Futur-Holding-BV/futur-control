@@ -10,9 +10,10 @@ import {
 const router: IRouter = Router();
 
 router.get("/repos", async (req, res): Promise<void> => {
+  const bypass = req.query["refresh"] === "true";
   try {
     const repos = await listMonitoredRepos();
-    const summaries = await Promise.all(repos.map((name) => repoSummary(name)));
+    const summaries = await Promise.all(repos.map((name) => repoSummary(name, bypass)));
     res.json(ListReposResponse.parse(summaries));
   } catch (err) {
     req.log.error({ err }, "Ophalen van repositories mislukt");
@@ -29,6 +30,7 @@ router.get("/repos/:name/detail", async (req, res): Promise<void> => {
     ? req.params.name[0]
     : req.params.name;
 
+  const bypass = req.query["refresh"] === "true";
   try {
     const repos = await listMonitoredRepos();
     const name = repos.find((r) => r === raw);
@@ -37,7 +39,7 @@ router.get("/repos/:name/detail", async (req, res): Promise<void> => {
       return;
     }
 
-    const detail = await repoDetail(name);
+    const detail = await repoDetail(name, bypass);
     res.json(GetRepoDetailResponse.parse(detail));
   } catch (err) {
     req.log.error({ err, repo: raw }, "Ophalen van repositorydetail mislukt");

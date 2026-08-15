@@ -6,6 +6,8 @@
 
 const GITHUB_API = "https://api.github.com";
 
+const CACHE_TTL_MS = 60_000;
+
 function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -279,7 +281,7 @@ async function detectAnomaly(repo: string): Promise<Anomaly | null> {
   }
 }
 
-export async function repoSummary(repo: string): Promise<RepoSummary> {
+async function fetchRepoSummary(repo: string): Promise<RepoSummary> {
   const org = githubOrg();
 
   const [repoInfo, commits, runs, anomaly] = await Promise.all([
@@ -309,6 +311,9 @@ export async function repoSummary(repo: string): Promise<RepoSummary> {
     htmlUrl: repoInfo?.html_url ?? null,
     anomaly,
   };
+}
+export function repoSummary(repo: string, bypass = false): Promise<RepoSummary> {
+  return withCache(`summary:${repo}`, bypass, () => fetchRepoSummary(repo));
 }
 
 /** First N lines of a job log that look like errors. */
@@ -372,7 +377,7 @@ export interface RepoDetail {
   failedCheck: FailedCheckDetail | null;
 }
 
-export async function repoDetail(repo: string): Promise<RepoDetail> {
+async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
   const org = githubOrg();
 
   const [repoInfo, commits, runs] = await Promise.all([
@@ -412,4 +417,30 @@ export async function repoDetail(repo: string): Promise<RepoDetail> {
     checks,
     failedCheck,
   };
+}
+export function repoDetail(repo: string, bypass = false): Promise<RepoDetail> {
+  return withCache(`detail:${repo}`, bypass, () => fetchRepoDetail(repo));
+}
+
+const cache = new Map<string, CacheEntry<any>>();
+
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+async function withCache<T>(
+  key: string,
+  bypass: boolean,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!bypass) {
+    const entry = cache.get(key) as CacheEntry<T> | undefined;
+    if (entry && entry.expiresAt > Date.now()) {
+      return entry.data;
+    }
+  }
+  const data = await fn();
+  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  return data;
 }
