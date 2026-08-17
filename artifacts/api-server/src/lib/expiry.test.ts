@@ -483,6 +483,44 @@ describe("niet-.nl-domein — malformed EXPIRY_MANUAL + RDAP 429 + geen cache", 
   });
 });
 
+describe("niet-.nl-domein — geldig EXPIRY_MANUAL-item", () => {
+  const COM_DOMAIN = "example.com";
+  let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
+
+  beforeAll(async () => {
+    isolateEnv();
+    process.env.EXPIRY_DOMAINS = COM_DOMAIN;
+    ({ listExpiryItems } = await freshExpiry());
+  });
+  afterAll(() => {
+    delete process.env.EXPIRY_MANUAL;
+    restoreEnv();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("toont '(handmatig ingevoerd)' in het label voor een niet-.nl-domein met geldige EXPIRY_MANUAL", async () => {
+    process.env.EXPIRY_MANUAL = `${COM_DOMAIN}=2030-06-14`;
+    // RDAP should NOT be called — the manual entry takes precedence.
+    const spy = stubFetch(() => { throw new Error("should not be called"); });
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${COM_DOMAIN}`);
+
+    // No RDAP call expected.
+    const rdapCalls = spy.mock.calls.filter(([input]) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      return url.includes("rdap.org");
+    });
+    expect(rdapCalls).toHaveLength(0);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).not.toBe("unknown");
+    expect(domain!.expiresAt).toBeTruthy();
+    expect(domain!.staleNote).toBeNull();
+    // Label must clearly indicate the date was entered manually.
+    expect(domain!.label).toMatch(/handmatig/i);
+  });
+});
 describe("domeinverloopdatum — cache ouder dan 7 dagen", () => {
   let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
 
