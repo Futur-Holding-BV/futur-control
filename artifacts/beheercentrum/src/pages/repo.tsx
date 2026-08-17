@@ -3,8 +3,13 @@ import {
   useGetRepoDetail, 
   getGetRepoDetailQueryKey,
   useListRepos,
-  useListProposals
+  getListReposQueryKey,
+  useListProposals,
+  useGetRepoSettings,
+  getGetRepoSettingsQueryKey,
+  useUpdateRepoSettings
 } from "@workspace/api-client-react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import { 
   ArrowLeft, 
@@ -23,10 +28,97 @@ import { formatExactDate, formatTimeAgo, cn } from "@/lib/utils";
 import { ProposalCard } from "@/components/proposal-card";
 import type { CheckRun } from "@workspace/api-client-react";
 
-function CheckStatusIcon({ status, className }: { status: "green" | "red" | "gray", className?: string }) {
+function CheckStatusIcon({ status, className }: { status: "green" | "yellow" | "red" | "gray", className?: string }) {
   if (status === "green") return <CheckCircle2 className={cn("text-emerald-500", className)} />;
+  if (status === "yellow") return <Clock className={cn("text-amber-500", className)} />;
   if (status === "red") return <XCircle className={cn("text-destructive", className)} />;
   return <HelpCircle className={cn("text-muted-foreground", className)} />;
+}
+
+function StalenessSettings({ name }: { name: string }) {
+  const queryClient = useQueryClient();
+  const { data: settings } = useGetRepoSettings(name);
+  const [yellow, setYellow] = useState<string>("");
+  const [red, setRed] = useState<string>("");
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (settings) {
+      setYellow(String(settings.staleYellowDays));
+      setRed(String(settings.staleRedDays));
+    }
+  }, [settings]);
+
+  const mutation = useUpdateRepoSettings({
+    mutation: {
+      onSuccess: () => {
+        setFeedback("Opgeslagen. De nieuwe drempels gelden vanaf de volgende controle.");
+        queryClient.invalidateQueries({ queryKey: getGetRepoSettingsQueryKey(name) });
+        queryClient.invalidateQueries({ queryKey: getListReposQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetRepoDetailQueryKey(name) });
+      },
+      onError: (err) => {
+        setFeedback(err?.data?.error || "Opslaan mislukt. Probeer het zo opnieuw.");
+      },
+    },
+  });
+
+  if (!settings) return null;
+
+  const save = () => {
+    setFeedback(null);
+    mutation.mutate({
+      name,
+      data: { staleYellowDays: Number(yellow), staleRedDays: Number(red) },
+    });
+  };
+
+  const dirty =
+    yellow !== String(settings.staleYellowDays) || red !== String(settings.staleRedDays);
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 flex flex-col gap-3">
+      <div>
+        <h3 className="font-semibold text-base">Verouderingsdrempels</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Zonder nieuwe commits wordt deze codebase na het gele aantal dagen geel en na het
+          rode aantal dagen rood (met melding). Verhoog de drempels voor een project dat
+          bewust stilligt.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-muted-foreground">Geel na (dagen)</span>
+          <input
+            type="number"
+            min={1}
+            value={yellow}
+            onChange={(e) => setYellow(e.target.value)}
+            className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-muted-foreground">Rood na (dagen)</span>
+          <input
+            type="number"
+            min={1}
+            value={red}
+            onChange={(e) => setRed(e.target.value)}
+            className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </label>
+        <Button
+          size="sm"
+          onClick={save}
+          disabled={mutation.isPending || !dirty}
+          className="mb-0.5"
+        >
+          {mutation.isPending ? "Opslaan…" : "Opslaan"}
+        </Button>
+      </div>
+      {feedback && <p className="text-sm text-muted-foreground">{feedback}</p>}
+    </div>
+  );
 }
 
 export default function RepoDetail() {
@@ -164,6 +256,7 @@ export default function RepoDetail() {
       <div className={cn(
         "rounded-2xl border p-6 sm:p-8 flex flex-col gap-6 transition-colors",
         isRed ? "bg-destructive/5 border-destructive/30" : 
+        repo.status === "yellow" ? "bg-amber-400/5 border-amber-400/30" :
         repo.status === "gray" ? "bg-card border-border" :
         "bg-emerald-500/5 border-emerald-500/30"
       )}>
@@ -172,6 +265,7 @@ export default function RepoDetail() {
             <div className={cn(
               "mt-1 p-2 rounded-xl flex-shrink-0",
               isRed ? "bg-destructive/20 text-destructive" :
+              repo.status === "yellow" ? "bg-amber-400/20 text-amber-500" :
               repo.status === "gray" ? "bg-muted text-muted-foreground" :
               "bg-emerald-500/20 text-emerald-500"
             )}>
@@ -180,15 +274,26 @@ export default function RepoDetail() {
             <div className="space-y-2">
               <h2 className={cn(
                 "text-xl font-semibold",
-                isRed ? "text-destructive" : repo.status === "gray" ? "text-foreground" : "text-emerald-500"
+                isRed ? "text-destructive" :
+                repo.status === "yellow" ? "text-amber-500" :
+                repo.status === "gray" ? "text-foreground" : "text-emerald-500"
               )}>
                 {isRed ? "Laatste controle gefaald" : 
+                 repo.status === "yellow" ? "Code raakt verouderd" :
                  repo.status === "gray" ? "Geen recente controles" : 
                  "Laatste controle geslaagd"}
               </h2>
               {isRed && repo.failReason && (
                 <p className="text-destructive/90 max-w-2xl text-sm sm:text-base leading-relaxed">
                   {repo.failReason}
+                </p>
+              )}
+              {repoSummary?.staleReason && (
+                <p className={cn(
+                  "max-w-2xl text-sm sm:text-base leading-relaxed",
+                  isRed ? "text-destructive/90" : "text-amber-600 dark:text-amber-400"
+                )}>
+                  {repoSummary.staleReason}
                 </p>
               )}
               {repo.lastCommitTitle && (
@@ -201,6 +306,9 @@ export default function RepoDetail() {
           </div>
         </div>
       </div>
+
+      {/* Staleness thresholds */}
+      <StalenessSettings name={name} />
 
       {/* Proposals Section */}
       {repoProposals.length > 0 && (

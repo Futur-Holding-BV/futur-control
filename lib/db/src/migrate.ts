@@ -22,7 +22,7 @@ export async function ensureTablesExist(): Promise<void> {
       CREATE TABLE IF NOT EXISTS repo_status_snapshots (
         repo_name            TEXT PRIMARY KEY,
         status               TEXT NOT NULL DEFAULT 'gray',
-        notified_status      TEXT NOT NULL DEFAULT 'gray',
+        notified_status      TEXT NOT NULL DEFAULT 'none',
         notified_anomaly_sha TEXT,
         updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
@@ -33,7 +33,7 @@ export async function ensureTablesExist(): Promise<void> {
     //  notified_anomaly_sha / last_notified_at / updated_at).
     await client.query(`
       ALTER TABLE repo_status_snapshots
-        ADD COLUMN IF NOT EXISTS notified_status TEXT NOT NULL DEFAULT 'gray'
+        ADD COLUMN IF NOT EXISTS notified_status TEXT NOT NULL DEFAULT 'none'
     `);
 
     // Remove the obsolete last_notified_at column if it still exists from an
@@ -82,6 +82,50 @@ export async function ensureTablesExist(): Promise<void> {
         domain     TEXT PRIMARY KEY,
         expires_at TIMESTAMPTZ NOT NULL,
         fetched_at TIMESTAMPTZ NOT NULL
+      )
+    `);
+
+    // Existing databases: default was 'gray'; move it to 'none' so a fresh
+    // row without an explicit value never looks "already notified". Stored
+    // row values stay untouched ('gray' keeps meaning already-notified).
+    await client.query(`
+      ALTER TABLE repo_status_snapshots
+        ALTER COLUMN notified_status SET DEFAULT 'none'
+    `);
+
+    // Debounce timestamp: since when the repo has continuously been in a
+    // problem state (red or unknown). Additive, non-destructive.
+    await client.query(`
+      ALTER TABLE repo_status_snapshots
+        ADD COLUMN IF NOT EXISTS problem_since TIMESTAMPTZ
+    `);
+
+    // ── push (PWA) ─
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint   TEXT PRIMARY KEY,
+        p256dh     TEXT NOT NULL,
+        auth       TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS vapid_keys (
+        id          TEXT PRIMARY KEY,
+        public_key  TEXT NOT NULL,
+        private_key TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
+    // ── repo_settings ───────────────────────────────────────────────────────
+    // Per-repository staleness thresholds (days without a commit before the
+    // repo turns yellow/red). Repos without a row use the defaults 7/14.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS repo_settings (
+        repo               TEXT PRIMARY KEY,
+        stale_yellow_days  INTEGER NOT NULL DEFAULT 7,
+        stale_red_days     INTEGER NOT NULL DEFAULT 14
       )
     `);
 

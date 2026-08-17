@@ -7,13 +7,14 @@
  */
 
 /**
- * green = latest check succeeded, red = failed, gray = no check ran
+ * green = latest check succeeded, yellow = code is getting stale (no commits past the yellow threshold), red = check failed or code stale past the red threshold, gray = no check ran or commit information unavailable
  */
 export type RepoSummaryStatus = typeof RepoSummaryStatus[keyof typeof RepoSummaryStatus];
 
 
 export const RepoSummaryStatus = {
   green: 'green',
+  yellow: 'yellow',
   red: 'red',
   gray: 'gray',
 } as const;

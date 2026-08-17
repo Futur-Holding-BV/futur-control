@@ -34,9 +34,15 @@ const agent = supertest(app);
 const CORRECT_PASSWORD = "geheim123";
 const TEST_SECRET = "test-session-secret";
 
-beforeAll(() => {
+beforeAll(async () => {
   process.env.ADMIN_PASSWORD = CORRECT_PASSWORD;
   process.env.SESSION_SECRET = TEST_SECRET;
+
+  // The rate limiter persists per-IP counters in the login_attempts table.
+  // Clear the test IP range so leftovers from a previous run cannot cause
+  // spurious 429s.
+  const { pool } = await import("@workspace/db");
+  await pool.query(`DELETE FROM login_attempts WHERE ip LIKE '10.0.%'`);
 });
 
 // ---------------------------------------------------------------------------
@@ -178,7 +184,7 @@ describe("POST /api/auth/login — tijdvenster verloopt", () => {
     const ip = "10.0.3.2";
     await failTimes(ip, 5); // IP wordt geblokkeerd
 
-    vi.advanceTimersByTime(60_001); // 60+ seconden vooruit
+    vi.advanceTimersByTime(65_000); // 60s blok + marge voor echte DB-kloktijd tijdens de 5 requests // 60+ seconden vooruit
 
     // Nu moet een nieuwe poging weer 401 (onjuist wachtwoord) geven, niet 429
     const res = await login(ip, "fout-na-verloop");
@@ -189,7 +195,7 @@ describe("POST /api/auth/login — tijdvenster verloopt", () => {
     const ip = "10.0.3.3";
     await failTimes(ip, 5);
 
-    vi.advanceTimersByTime(60_001);
+    vi.advanceTimersByTime(65_000); // 60s blok + marge voor echte DB-kloktijd tijdens de 5 requests
 
     const res = await login(ip, CORRECT_PASSWORD);
     expect(res.status).toBe(200);

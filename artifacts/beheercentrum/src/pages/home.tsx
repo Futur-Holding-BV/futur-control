@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { formatTimeAgo, cn } from "@/lib/utils";
 import { ProposalCard } from "@/components/proposal-card";
 
-function StatusDot({ status, pulsing = false }: { status: "green" | "red" | "gray", pulsing?: boolean }) {
+function StatusDot({ status, pulsing = false }: { status: "green" | "yellow" | "red" | "gray", pulsing?: boolean }) {
   return (
     <div className="relative flex h-3 w-3 items-center justify-center">
       {pulsing && status === 'red' && (
@@ -31,6 +31,7 @@ function StatusDot({ status, pulsing = false }: { status: "green" | "red" | "gra
       <span className={cn(
         "relative inline-flex h-2.5 w-2.5 rounded-full",
         status === "green" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" :
+        status === "yellow" ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]" :
         status === "red" ? "bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.8)]" :
         "bg-muted-foreground"
       )}></span>
@@ -219,6 +220,7 @@ export default function Home() {
         {repos?.map((repo, idx) => {
           const isRed = repo.status === 'red';
           const isGray = repo.status === 'gray';
+          const isYellow = repo.status === 'yellow';
           
           return (
             <Link 
@@ -227,6 +229,7 @@ export default function Home() {
               className={cn(
                 "group relative flex flex-col overflow-hidden rounded-xl border bg-card p-4 transition-all duration-300 hover:shadow-md sm:p-5 outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 isRed ? "border-destructive/30 hover:border-destructive/60 hover:bg-destructive/5" : 
+                isYellow ? "border-amber-400/30 hover:border-amber-400/60 hover:bg-amber-400/5" :
                 isGray ? "border-border hover:border-muted-foreground/30 hover:bg-accent/50" : 
                 "border-border hover:border-emerald-500/30 hover:bg-emerald-500/5"
               )}
@@ -235,6 +238,7 @@ export default function Home() {
               <div className={cn(
                 "absolute inset-y-0 left-0 w-1 transition-transform duration-300 origin-left scale-x-0 group-hover:scale-x-100",
                 isRed ? "bg-destructive" :
+                isYellow ? "bg-amber-400" :
                 isGray ? "bg-muted-foreground" :
                 "bg-emerald-500"
               )} />
@@ -251,6 +255,11 @@ export default function Home() {
                       {isRed && (
                         <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive ring-1 ring-inset ring-destructive/20">
                           Faalt
+                        </span>
+                      )}
+                      {isYellow && (
+                        <span className="inline-flex items-center rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-500 ring-1 ring-inset ring-amber-400/20">
+                          Verouderd
                         </span>
                       )}
                       {repo.recoveredAfterRetry && !isRed && (

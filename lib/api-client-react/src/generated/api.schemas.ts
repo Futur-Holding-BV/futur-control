@@ -50,9 +50,9 @@ export interface ExpiryItem {
      */
   unknownReason?: string | null;
   /**
-   * Set when the expiry date comes from a cached previous reading because RDAP was temporarily unavailable
-   * @nullable
-   */
+     * Set when the expiry date comes from a cached previous reading because RDAP was temporarily unavailable
+     * @nullable
+     */
   staleNote?: string | null;
 }
 
@@ -90,18 +90,42 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface PushPublicKey {
+  publicKey: string;
+  devices: number;
+}
+
+export type PushSubscribeRequestKeys = {
+  p256dh: string;
+  auth: string;
+};
+
+export interface PushSubscribeRequest {
+  endpoint: string;
+  keys: PushSubscribeRequestKeys;
+}
+
+export interface PushUnsubscribeRequest {
+  endpoint: string;
+}
+
+export interface PushOk {
+  ok: boolean;
+}
+
 export interface ApiErrorMessage {
   error: string;
 }
 
 /**
- * green = latest check succeeded, red = failed, gray = no check ran
+ * green = latest check succeeded, yellow = code is getting stale (no commits past the yellow threshold), red = check failed or code stale past the red threshold, gray = no check ran or commit information unavailable
  */
 export type RepoSummaryStatus = typeof RepoSummaryStatus[keyof typeof RepoSummaryStatus];
 
 
 export const RepoSummaryStatus = {
   green: 'green',
+  yellow: 'yellow',
   red: 'red',
   gray: 'gray',
 } as const;
@@ -117,8 +141,18 @@ export interface AnomalyAlert {
 
 export interface RepoSummary {
   name: string;
-  /** green = latest check succeeded, red = failed, gray = no check ran */
+  /** green = latest check succeeded, yellow = code is getting stale (no commits past the yellow threshold), red = check failed or code stale past the red threshold, gray = no check ran or commit information unavailable */
   status: RepoSummaryStatus;
+  /**
+     * Plain-language explanation when the status was influenced by the staleness check (Dutch)
+     * @nullable
+     */
+  staleReason?: string | null;
+  /**
+     * Timestamp of the most recent commit, when available
+     * @nullable
+     */
+  lastCommitAt?: string | null;
   /** @nullable */
   lastPushAt?: string | null;
   /** @nullable */
@@ -136,6 +170,19 @@ export interface RepoSummary {
   anomaly?: AnomalyAlert | null;
   /** True when the latest check succeeded only after an automatic retry ("hersteld na herhaling") */
   recoveredAfterRetry?: boolean;
+}
+
+export interface RepoSettings {
+  repo: string;
+  /** Days without a commit before the repository turns yellow */
+  staleYellowDays: number;
+  /** Days without a commit before the repository turns red (uses the existing red notification chain) */
+  staleRedDays: number;
+}
+
+export interface RepoSettingsUpdate {
+  staleYellowDays: number;
+  staleRedDays: number;
 }
 
 export type CheckRunStatus = typeof CheckRunStatus[keyof typeof CheckRunStatus];
@@ -174,6 +221,7 @@ export type RepoDetailStatus = typeof RepoDetailStatus[keyof typeof RepoDetailSt
 
 export const RepoDetailStatus = {
   green: 'green',
+  yellow: 'yellow',
   red: 'red',
   gray: 'gray',
 } as const;

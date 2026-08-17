@@ -5,6 +5,7 @@ import reposRouter from "./repos";
 import notificationsRouter from "./notifications";
 import expiryRouter from "./expiry";
 import actionsRouter from "./actions";
+import pushRouter from "./push";
 import { requireAuth } from "../lib/auth.js";
 
 const router: IRouter = Router();
@@ -17,5 +18,6 @@ router.use(reposRouter);
 router.use(notificationsRouter);
 router.use(expiryRouter);
 router.use(actionsRouter);
+router.use(pushRouter);
 
 export default router;

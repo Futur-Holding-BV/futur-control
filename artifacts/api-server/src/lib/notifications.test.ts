@@ -19,6 +19,8 @@ const VALID_WEBHOOK = "https://hooks.slack.com/services/T000/B000/xxxx";
 const redSummary: RepoSummary = {
   name: "fps-api",
   status: "red",
+  staleReason: null,
+  lastCommitAt: "2026-08-15T08:00:00Z",
   lastPushAt: "2026-08-15T08:00:00Z",
   lastCommitTitle: "fix: broken build",
   failReason: "tests falen",

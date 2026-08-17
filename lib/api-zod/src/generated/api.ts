@@ -23,7 +23,9 @@ export const HealthCheckResponse = zod.object({
  */
 export const ListReposResponseItem = zod.object({
   "name": zod.string(),
-  "status": zod.enum(['green', 'red', 'gray']).describe('green = latest check succeeded, red = failed, gray = no check ran'),
+  "status": zod.enum(['green', 'yellow', 'red', 'gray']).describe('green = latest check succeeded, yellow = code is getting stale (no commits past the yellow threshold), red = check failed or code stale past the red threshold, gray = no check ran or commit information unavailable'),
+  "staleReason": zod.string().nullish().describe('Plain-language explanation when the status was influenced by the staleness check (Dutch)'),
+  "lastCommitAt": zod.coerce.date().nullish().describe('Timestamp of the most recent commit, when available'),
   "lastPushAt": zod.coerce.date().nullish(),
   "lastCommitTitle": zod.string().nullish(),
   "failReason": zod.string().nullish().describe('Plain-language reason when status is red (e.g. \"typecheck faalt\")'),
@@ -50,7 +52,7 @@ export const GetRepoDetailParams = zod.object({
 
 export const GetRepoDetailResponse = zod.object({
   "name": zod.string(),
-  "status": zod.enum(['green', 'red', 'gray']),
+  "status": zod.enum(['green', 'yellow', 'red', 'gray']),
   "lastPushAt": zod.coerce.date().nullish(),
   "lastCommitTitle": zod.string().nullish(),
   "failReason": zod.string().nullish(),
@@ -67,6 +69,86 @@ export const GetRepoDetailResponse = zod.object({
   "errorLines": zod.array(zod.string()).describe('First ten error lines from the failed run\'s log'),
   "logUrl": zod.string().describe('Link to the full log on GitHub')
 }),zod.null()]).optional()
+})
+
+
+/**
+ * Returns the configured staleness thresholds (in days) for a repository. Defaults are 7 (yellow) and 14 (red) when nothing was configured.
+ * @summary Staleness thresholds for one repository
+ */
+export const GetRepoSettingsParams = zod.object({
+  "name": zod.coerce.string()
+})
+
+export const GetRepoSettingsResponse = zod.object({
+  "repo": zod.string(),
+  "staleYellowDays": zod.number().describe('Days without a commit before the repository turns yellow'),
+  "staleRedDays": zod.number().describe('Days without a commit before the repository turns red (uses the existing red notification chain)')
+})
+
+
+/**
+ * Stores per-repository staleness thresholds in the database, so a project that is deliberately paused does not raise false alarms.
+ * @summary Update staleness thresholds for one repository
+ */
+export const UpdateRepoSettingsParams = zod.object({
+  "name": zod.coerce.string()
+})
+
+export const UpdateRepoSettingsBody = zod.object({
+  "staleYellowDays": zod.number(),
+  "staleRedDays": zod.number()
+})
+
+export const UpdateRepoSettingsResponse = zod.object({
+  "repo": zod.string(),
+  "staleYellowDays": zod.number().describe('Days without a commit before the repository turns yellow'),
+  "staleRedDays": zod.number().describe('Days without a commit before the repository turns red (uses the existing red notification chain)')
+})
+
+
+/**
+ * @summary VAPID public key for web-push subscriptions
+ */
+export const GetPushPublicKeyResponse = zod.object({
+  "publicKey": zod.string(),
+  "devices": zod.number()
+})
+
+
+/**
+ * @summary Register this device for push notifications
+ */
+export const SubscribePushBody = zod.object({
+  "endpoint": zod.string(),
+  "keys": zod.object({
+  "p256dh": zod.string(),
+  "auth": zod.string()
+})
+})
+
+export const SubscribePushResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Remove this device's push subscription
+ */
+export const UnsubscribePushBody = zod.object({
+  "endpoint": zod.string()
+})
+
+export const UnsubscribePushResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Send a test push notification to all registered devices
+ */
+export const SendPushTestResponse = zod.object({
+  "ok": zod.boolean()
 })
 
 

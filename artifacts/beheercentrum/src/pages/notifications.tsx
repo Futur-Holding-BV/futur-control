@@ -13,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PushSettingsCard } from "@/components/push-settings-card";
 
 export default function NotificationsPage() {
   const { data: settings, isLoading } = useQuery({
@@ -25,7 +26,7 @@ export default function NotificationsPage() {
       <div className="space-y-1">
         <h1 className="text-xl md:text-2xl font-semibold tracking-tight">Meldingen</h1>
         <p className="text-sm text-muted-foreground">
-          Ontvang een Slack-bericht zodra een codebase rood wordt of een grote afwijking detecteert.
+          Ontvang een Slack-bericht of pushmelding op je telefoon zodra een codebase rood wordt of een grote afwijking wordt gedetecteerd.
         </p>
       </div>
 
@@ -120,6 +121,9 @@ export default function NotificationsPage() {
               </div>
             )}
           </div>
+
+          {/* Push notifications on this device */}
+          <PushSettingsCard />
 
           {/* Trigger info */}
           <div className="rounded-xl border border-border/50 bg-muted/30 p-5 flex flex-col gap-2">

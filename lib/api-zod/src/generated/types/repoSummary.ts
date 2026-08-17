@@ -10,8 +10,18 @@ import type { RepoSummaryStatus } from './repoSummaryStatus';
 
 export interface RepoSummary {
   name: string;
-  /** green = latest check succeeded, red = failed, gray = no check ran */
+  /** green = latest check succeeded, yellow = code is getting stale (no commits past the yellow threshold), red = check failed or code stale past the red threshold, gray = no check ran or commit information unavailable */
   status: RepoSummaryStatus;
+  /**
+     * Plain-language explanation when the status was influenced by the staleness check (Dutch)
+     * @nullable
+     */
+  staleReason?: string | null;
+  /**
+     * Timestamp of the most recent commit, when available
+     * @nullable
+     */
+  lastCommitAt?: Date | null;
   /** @nullable */
   lastPushAt?: Date | null;
   /** @nullable */

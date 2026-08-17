@@ -28,12 +28,18 @@ import type {
   ListExpiryItemsParams,
   NotificationSettings,
   Proposal,
+  PushOk,
+  PushPublicKey,
+  PushSubscribeRequest,
+  PushUnsubscribeRequest,
   RepoDetail,
+  RepoSettings,
+  RepoSettingsUpdate,
   RepoSummary
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
-import type { ErrorType } from '../custom-fetch';
+import type { ErrorType , BodyType } from '../custom-fetch';
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -292,6 +298,447 @@ export function useGetRepoDetail<TData = Awaited<ReturnType<typeof getRepoDetail
 
 
 
+
+export const getGetRepoSettingsUrl = (name: string,) => {
+
+
+
+
+  return `/api/repos/${name}/settings`
+}
+
+/**
+ * Returns the configured staleness thresholds (in days) for a repository. Defaults are 7 (yellow) and 14 (red) when nothing was configured.
+ * @summary Staleness thresholds for one repository
+ */
+export const getRepoSettings = async (name: string, options?: Parameters<typeof customFetch>[1]): Promise<RepoSettings> => {
+
+  return customFetch<RepoSettings>(getGetRepoSettingsUrl(name),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetRepoSettingsQueryKey = (name: string,) => {
+    return [
+    `/api/repos/${name}/settings`
+    ] as const;
+    }
+
+
+export const getGetRepoSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getRepoSettings>>, TError = ErrorType<ApiErrorMessage>>(name: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRepoSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRepoSettingsQueryKey(name);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRepoSettings>>> = ({ signal }) => getRepoSettings(name, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: name !== null && name !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRepoSettings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetRepoSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getRepoSettings>>>
+export type GetRepoSettingsQueryError = ErrorType<ApiErrorMessage>
+
+
+/**
+ * @summary Staleness thresholds for one repository
+ */
+
+export function useGetRepoSettings<TData = Awaited<ReturnType<typeof getRepoSettings>>, TError = ErrorType<ApiErrorMessage>>(
+ name: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRepoSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetRepoSettingsQueryOptions(name,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateRepoSettingsUrl = (name: string,) => {
+
+
+
+
+  return `/api/repos/${name}/settings`
+}
+
+/**
+ * Stores per-repository staleness thresholds in the database, so a project that is deliberately paused does not raise false alarms.
+ * @summary Update staleness thresholds for one repository
+ */
+export const updateRepoSettings = async (name: string,
+    repoSettingsUpdate: RepoSettingsUpdate, options?: Parameters<typeof customFetch>[1]): Promise<RepoSettings> => {
+
+  return customFetch<RepoSettings>(getUpdateRepoSettingsUrl(name),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(repoSettingsUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateRepoSettingsMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRepoSettings>>, TError,{name: string;data: BodyType<RepoSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateRepoSettings>>, TError,{name: string;data: BodyType<RepoSettingsUpdate>}, TContext> => {
+
+const mutationKey = ['updateRepoSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateRepoSettings>>, {name: string;data: BodyType<RepoSettingsUpdate>}> = (props) => {
+          const {name,data} = props ?? {};
+
+          return  updateRepoSettings(name,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateRepoSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateRepoSettings>>>
+    export type UpdateRepoSettingsMutationBody = BodyType<RepoSettingsUpdate>
+    export type UpdateRepoSettingsMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Update staleness thresholds for one repository
+ */
+export const useUpdateRepoSettings = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRepoSettings>>, TError,{name: string;data: BodyType<RepoSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateRepoSettings>>,
+        TError,
+        {name: string;data: BodyType<RepoSettingsUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateRepoSettingsMutationOptions(options));
+    }
+
+export const getGetPushPublicKeyUrl = () => {
+
+
+
+
+  return `/api/push/public-key`
+}
+
+/**
+ * @summary VAPID public key for web-push subscriptions
+ */
+export const getPushPublicKey = async ( options?: Parameters<typeof customFetch>[1]): Promise<PushPublicKey> => {
+
+  return customFetch<PushPublicKey>(getGetPushPublicKeyUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPushPublicKeyQueryKey = () => {
+    return [
+    `/api/push/public-key`
+    ] as const;
+    }
+
+
+export const getGetPushPublicKeyQueryOptions = <TData = Awaited<ReturnType<typeof getPushPublicKey>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPushPublicKey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPushPublicKeyQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPushPublicKey>>> = ({ signal }) => getPushPublicKey({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPushPublicKey>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPushPublicKeyQueryResult = NonNullable<Awaited<ReturnType<typeof getPushPublicKey>>>
+export type GetPushPublicKeyQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary VAPID public key for web-push subscriptions
+ */
+
+export function useGetPushPublicKey<TData = Awaited<ReturnType<typeof getPushPublicKey>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPushPublicKey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPushPublicKeyQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSubscribePushUrl = () => {
+
+
+
+
+  return `/api/push/subscribe`
+}
+
+/**
+ * @summary Register this device for push notifications
+ */
+export const subscribePush = async (pushSubscribeRequest: PushSubscribeRequest, options?: Parameters<typeof customFetch>[1]): Promise<PushOk> => {
+
+  return customFetch<PushOk>(getSubscribePushUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(pushSubscribeRequest)
+  }
+);}
+
+
+
+
+
+export const getSubscribePushMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof subscribePush>>, TError,{data: BodyType<PushSubscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof subscribePush>>, TError,{data: BodyType<PushSubscribeRequest>}, TContext> => {
+
+const mutationKey = ['subscribePush'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof subscribePush>>, {data: BodyType<PushSubscribeRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  subscribePush(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubscribePushMutationResult = NonNullable<Awaited<ReturnType<typeof subscribePush>>>
+    export type SubscribePushMutationBody = BodyType<PushSubscribeRequest>
+    export type SubscribePushMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Register this device for push notifications
+ */
+export const useSubscribePush = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof subscribePush>>, TError,{data: BodyType<PushSubscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof subscribePush>>,
+        TError,
+        {data: BodyType<PushSubscribeRequest>},
+        TContext
+      > => {
+      return useMutation(getSubscribePushMutationOptions(options));
+    }
+
+export const getUnsubscribePushUrl = () => {
+
+
+
+
+  return `/api/push/unsubscribe`
+}
+
+/**
+ * @summary Remove this device's push subscription
+ */
+export const unsubscribePush = async (pushUnsubscribeRequest: PushUnsubscribeRequest, options?: Parameters<typeof customFetch>[1]): Promise<PushOk> => {
+
+  return customFetch<PushOk>(getUnsubscribePushUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(pushUnsubscribeRequest)
+  }
+);}
+
+
+
+
+
+export const getUnsubscribePushMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unsubscribePush>>, TError,{data: BodyType<PushUnsubscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unsubscribePush>>, TError,{data: BodyType<PushUnsubscribeRequest>}, TContext> => {
+
+const mutationKey = ['unsubscribePush'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unsubscribePush>>, {data: BodyType<PushUnsubscribeRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  unsubscribePush(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnsubscribePushMutationResult = NonNullable<Awaited<ReturnType<typeof unsubscribePush>>>
+    export type UnsubscribePushMutationBody = BodyType<PushUnsubscribeRequest>
+    export type UnsubscribePushMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Remove this device's push subscription
+ */
+export const useUnsubscribePush = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unsubscribePush>>, TError,{data: BodyType<PushUnsubscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unsubscribePush>>,
+        TError,
+        {data: BodyType<PushUnsubscribeRequest>},
+        TContext
+      > => {
+      return useMutation(getUnsubscribePushMutationOptions(options));
+    }
+
+export const getSendPushTestUrl = () => {
+
+
+
+
+  return `/api/push/test`
+}
+
+/**
+ * @summary Send a test push notification to all registered devices
+ */
+export const sendPushTest = async ( options?: Parameters<typeof customFetch>[1]): Promise<PushOk> => {
+
+  return customFetch<PushOk>(getSendPushTestUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getSendPushTestMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendPushTest>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendPushTest>>, TError,void, TContext> => {
+
+const mutationKey = ['sendPushTest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendPushTest>>, void> = () => {
+
+
+          return  sendPushTest(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendPushTestMutationResult = NonNullable<Awaited<ReturnType<typeof sendPushTest>>>
+
+    export type SendPushTestMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Send a test push notification to all registered devices
+ */
+export const useSendPushTest = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendPushTest>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendPushTest>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSendPushTestMutationOptions(options));
+    }
 
 export const getGetNotificationSettingsUrl = () => {
 

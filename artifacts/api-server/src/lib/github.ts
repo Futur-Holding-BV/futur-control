@@ -129,7 +129,7 @@ export async function listMonitoredRepos(): Promise<string[]> {
 interface GhCommitListItem {
   sha: string;
   html_url: string;
-  commit: { message: string };
+  commit: { message: string; committer?: { date?: string } | null };
 }
 
 interface GhCommitDetail {
@@ -162,7 +162,7 @@ interface GhJob {
   steps?: Array<{ name: string; conclusion: string | null }>;
 }
 
-export type Status = "green" | "red" | "gray";
+export type Status = "green" | "yellow" | "red" | "gray";
 
 export interface Anomaly {
   commitSha: string;
@@ -175,6 +175,10 @@ export interface Anomaly {
 export interface RepoSummary {
   name: string;
   status: Status;
+  /** Set when the staleness check influenced the status (plain Dutch). */
+  staleReason: string | null;
+  /** Timestamp of the most recent commit, when available. */
+  lastCommitAt: string | null;
   lastPushAt: string | null;
   lastCommitTitle: string | null;
   failReason: string | null;
@@ -297,12 +301,27 @@ async function fetchRepoSummary(repo: string): Promise<RepoSummary> {
   ]);
 
   const latest = runs[0];
-  const status = runStatus(latest);
+  const checkStatus = runStatus(latest);
 
   let failReason: string | null = null;
-  if (status === "red" && latest) {
+  if (checkStatus === "red" && latest) {
     const names = await failedJobNames(repo, latest.id);
     failReason = plainFailReason(names);
+  }
+
+  // Staleness: code without recent commits turns yellow/red per the
+  // configurable per-repo thresholds; no commit info means never green.
+  const lastCommitAt = commits[0]?.commit.committer?.date ?? null;
+  const { applyStaleness, getRepoThresholds } = await import("./staleness.js");
+  const thresholds = await getRepoThresholds(repo);
+  const stale = applyStaleness(
+    checkStatus,
+    lastCommitAt ? new Date(lastCommitAt) : null,
+    thresholds,
+  );
+  const status = stale.status;
+  if (status === "red" && !failReason) {
+    failReason = stale.staleReason;
   }
 
   let recoveredAfterRetry = false;
@@ -319,6 +338,8 @@ async function fetchRepoSummary(repo: string): Promise<RepoSummary> {
   return {
     name: repo,
     status,
+    staleReason: stale.staleReason,
+    lastCommitAt,
     lastPushAt: repoInfo?.pushed_at ?? null,
     lastCommitTitle: commits[0] ? commitTitle(commits[0].commit.message) : null,
     failReason,
@@ -466,14 +487,27 @@ async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
   ]);
 
   const latest = runs[0];
-  const status = runStatus(latest);
+  const checkStatus = runStatus(latest);
 
   let failReason: string | null = null;
   let failedCheck: FailedCheckDetail | null = null;
-  if (status === "red" && latest) {
+  if (checkStatus === "red" && latest) {
     const names = await failedJobNames(repo, latest.id);
     failReason = plainFailReason(names);
     failedCheck = await failedCheckDetail(repo, latest);
+  }
+
+  // Same staleness rules as the summary, so both views agree on the status.
+  const lastCommitAt = commits[0]?.commit.committer?.date ?? null;
+  const { applyStaleness, getRepoThresholds } = await import("./staleness.js");
+  const stale = applyStaleness(
+    checkStatus,
+    lastCommitAt ? new Date(lastCommitAt) : null,
+    await getRepoThresholds(repo),
+  );
+  const status = stale.status;
+  if (status === "red" && !failReason) {
+    failReason = stale.staleReason;
   }
 
   const checks: CheckRunInfo[] = runs.map((run) => ({
@@ -500,6 +534,15 @@ export function repoDetail(repo: string, bypass = false): Promise<RepoDetail> {
 }
 
 const cache = new Map<string, CacheEntry<any>>();
+
+/**
+ * Drops the cached summary and detail for one repo, so a settings change
+ * (e.g. staleness thresholds) is visible on the very next fetch.
+ */
+export function invalidateRepoCache(repo: string): void {
+  cache.delete(`summary:${repo}`);
+  cache.delete(`detail:${repo}`);
+}
 
 interface CacheEntry<T> {
   data: T;

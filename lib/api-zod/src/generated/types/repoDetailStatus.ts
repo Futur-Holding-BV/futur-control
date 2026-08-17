@@ -11,6 +11,7 @@ export type RepoDetailStatus = typeof RepoDetailStatus[keyof typeof RepoDetailSt
 
 export const RepoDetailStatus = {
   green: 'green',
+  yellow: 'yellow',
   red: 'red',
   gray: 'gray',
 } as const;

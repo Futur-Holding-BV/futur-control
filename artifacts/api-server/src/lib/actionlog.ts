@@ -8,7 +8,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { logger } from "./logger.js";
 
 export interface LogActionInput {
-  kind: "auto_retry" | "manual_rerun";
+  kind: "auto_retry" | "manual_rerun" | "melding_onderdrukt";
   action: string;
   repo?: string | null;
   runId?: string | null;

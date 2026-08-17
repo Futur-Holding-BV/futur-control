@@ -64,6 +64,10 @@ vi.mock("./selfheal.js", () => ({
   settleRecovery: vi.fn(),
 }));
 
+vi.mock("./actionlog.js", () => ({
+  logAction: vi.fn(async () => 1),
+}));
+
 // ---------------------------------------------------------------------------
 // Imports (after mocks so the mocked versions are used)
 // ---------------------------------------------------------------------------
@@ -90,6 +94,8 @@ function makeSummary(overrides: Partial<RepoSummary> = {}): RepoSummary {
   return {
     name: repoName,
     status: "green",
+    staleReason: null,
+    lastCommitAt: "2026-08-15T08:00:00Z",
     lastPushAt: "2026-08-15T08:00:00Z",
     lastCommitTitle: "fix: something",
     failReason: null,
@@ -119,10 +125,15 @@ function mockSnapshot(
     notifiedStatus: string;
     notifiedAnomalySha: string | null;
     lastRedNotifiedAt?: Date | null;
+    problemSince?: Date | null;
   } | null,
 ) {
   const row = snapshot
-    ? { ...snapshot, lastRedNotifiedAt: snapshot.lastRedNotifiedAt ?? null }
+    ? {
+        ...snapshot,
+        lastRedNotifiedAt: snapshot.lastRedNotifiedAt ?? null,
+        problemSince: snapshot.problemSince ?? null,
+      }
     : null;
 
   const selectMock = {
@@ -314,6 +325,9 @@ describe("pollAll — full repo coverage", () => {
 // ---------------------------------------------------------------------------
 
 describe("pollAll — saveSnapshot failure handling", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   beforeEach(() => {
     vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
     vi.mocked(maybeAutoRetry).mockResolvedValue(false);
@@ -348,8 +362,15 @@ describe("pollAll — saveSnapshot failure handling", () => {
   });
 
   it("still attempts the snapshot write even when a notification was delivered", async () => {
-    // Repo is green → red transition so a notification will be sent.
-    mockSnapshot({ status: "red", notifiedStatus: "green", notifiedAnomalySha: null });
+    // Repo is red for 30 minutes (past the debounce) so a notification is sent.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-17T10:00:00Z")); // Monday 12:00 Amsterdam
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "green",
+      notifiedAnomalySha: null,
+      problemSince: new Date(Date.now() - 30 * 60 * 1000),
+    });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red" }));
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
 

@@ -15,7 +15,7 @@ export const repoStatusSnapshots = pgTable("repo_status_snapshots", {
   /** Last status fetched from GitHub (green | red | gray) */
   status: text("status").notNull().default("gray"),
   /** Last status for which Slack notification was successfully delivered */
-  notifiedStatus: text("notified_status").notNull().default("gray"),
+  notifiedStatus: text("notified_status").notNull().default("none"),
   /** SHA of the anomaly commit for which a Slack notification was delivered */
   notifiedAnomalySha: text("notified_anomaly_sha"),
   /**
@@ -26,6 +26,12 @@ export const repoStatusSnapshots = pgTable("repo_status_snapshots", {
    * Reset to null on recovery.
    */
   lastRedNotifiedAt: timestamp("last_red_notified_at", { withTimezone: true }),
+  /**
+   * Since when the repo has continuously been in a problem state (red or
+   * unknown/gray). Null when the repo is healthy. Used for the 10-minute
+   * debounce: notifications only go out once a problem has persisted.
+   */
+  problemSince: timestamp("problem_since", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .$defaultFn(() => new Date()),

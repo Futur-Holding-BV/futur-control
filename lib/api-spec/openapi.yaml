@@ -84,6 +84,139 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorMessage"
+  /repos/{name}/settings:
+    get:
+      operationId: getRepoSettings
+      tags: [repos]
+      summary: Staleness thresholds for one repository
+      description: Returns the configured staleness thresholds (in days) for a repository. Defaults are 7 (yellow) and 14 (red) when nothing was configured.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current thresholds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoSettings"
+        "404":
+          description: Repository not found or not monitored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+    put:
+      operationId: updateRepoSettings
+      tags: [repos]
+      summary: Update staleness thresholds for one repository
+      description: Stores per-repository staleness thresholds in the database, so a project that is deliberately paused does not raise false alarms.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepoSettingsUpdate"
+      responses:
+        "200":
+          description: Saved thresholds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoSettings"
+        "400":
+          description: Invalid thresholds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+        "404":
+          description: Repository not found or not monitored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+  /push/public-key:
+    get:
+      operationId: getPushPublicKey
+      tags: [push]
+      summary: VAPID public key for web-push subscriptions
+      responses:
+        "200":
+          description: Public key and number of registered devices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushPublicKey"
+  /push/subscribe:
+    post:
+      operationId: subscribePush
+      tags: [push]
+      summary: Register this device for push notifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscribeRequest"
+      responses:
+        "200":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushOk"
+        "400":
+          description: Invalid subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+  /push/unsubscribe:
+    post:
+      operationId: unsubscribePush
+      tags: [push]
+      summary: Remove this device's push subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushUnsubscribeRequest"
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushOk"
+  /push/test:
+    post:
+      operationId: sendPushTest
+      tags: [push]
+      summary: Send a test push notification to all registered devices
+      responses:
+        "200":
+          description: Delivered to at least one device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushOk"
+        "409":
+          description: No device could be reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
   /notifications/settings:
     get:
       operationId: getNotificationSettings
@@ -269,6 +402,40 @@ components:
           type: string
       required:
         - status
+    PushPublicKey:
+      type: object
+      required: [publicKey, devices]
+      properties:
+        publicKey:
+          type: string
+        devices:
+          type: number
+    PushSubscribeRequest:
+      type: object
+      required: [endpoint, keys]
+      properties:
+        endpoint:
+          type: string
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh:
+              type: string
+            auth:
+              type: string
+    PushUnsubscribeRequest:
+      type: object
+      required: [endpoint]
+      properties:
+        endpoint:
+          type: string
+    PushOk:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
     ApiErrorMessage:
       type: object
       required: [error]
@@ -283,8 +450,15 @@ components:
           type: string
         status:
           type: string
-          enum: [green, red, gray]
-          description: green = latest check succeeded, red = failed, gray = no check ran
+          enum: [green, yellow, red, gray]
+          description: green = latest check succeeded, yellow = code is getting stale (no commits past the yellow threshold), red = check failed or code stale past the red threshold, gray = no check ran or commit information unavailable
+        staleReason:
+          type: ["string", "null"]
+          description: Plain-language explanation when the status was influenced by the staleness check (Dutch)
+        lastCommitAt:
+          type: ["string", "null"]
+          format: date-time
+          description: Timestamp of the most recent commit, when available
         lastPushAt:
           type: ["string", "null"]
           format: date-time
@@ -303,6 +477,26 @@ components:
         recoveredAfterRetry:
           type: boolean
           description: True when the latest check succeeded only after an automatic retry ("hersteld na herhaling")
+    RepoSettings:
+      type: object
+      required: [repo, staleYellowDays, staleRedDays]
+      properties:
+        repo:
+          type: string
+        staleYellowDays:
+          type: number
+          description: Days without a commit before the repository turns yellow
+        staleRedDays:
+          type: number
+          description: Days without a commit before the repository turns red (uses the existing red notification chain)
+    RepoSettingsUpdate:
+      type: object
+      required: [staleYellowDays, staleRedDays]
+      properties:
+        staleYellowDays:
+          type: number
+        staleRedDays:
+          type: number
     AnomalyAlert:
       type: object
       required: [commitSha, commitTitle, fileName, linesChanged, commitUrl]
@@ -357,7 +551,7 @@ components:
           type: string
         status:
           type: string
-          enum: [green, red, gray]
+          enum: [green, yellow, red, gray]
         lastPushAt:
           type: ["string", "null"]
           format: date-time
