@@ -385,17 +385,20 @@ async function domainItems(): Promise<ExpiryItem[]> {
     // Manually maintained date (e.g. .nl domains: SIDN publishes no expiry
     // via RDAP). Never queried at the registry; the date comes from the
     // EXPIRY_MANUAL secret and is clearly marked as manually entered.
-    const manualDate = manual.get(domain.toLowerCase());
+    const manualDate = manual.valid.get(domain.toLowerCase());
     if (manualDate) {
       results.push(known({ ...base, label: `Domein ${domain} (handmatig ingevoerd)` }, manualDate));
       continue;
     }
     if (domain.toLowerCase().endsWith(".nl")) {
+      const hasMalformed = manual.malformed.has(domain.toLowerCase());
       results.push(
         unknown(
           base,
-          "het .nl-register (SIDN) publiceert geen verloopdatum — zet de datum handmatig in het geheim EXPIRY_MANUAL, bijvoorbeeld: " +
-            `${domain}=2027-06-14`,
+          hasMalformed
+            ? `er staat een vermelding in EXPIRY_MANUAL voor dit domein, maar de datum kon niet worden gelezen — controleer de notatie (verwacht: ${domain}=JJJJ-MM-DD)`
+            : "het .nl-register (SIDN) publiceert geen verloopdatum — zet de datum handmatig in het geheim EXPIRY_MANUAL, bijvoorbeeld: " +
+                `${domain}=2027-06-14`,
         ),
       );
       continue;
@@ -441,20 +444,49 @@ async function domainItems(): Promise<ExpiryItem[]> {
 }
 
 /**
- * Parses the EXPIRY_MANUAL secret: entries `domein=JJJJ-MM-DD`, separated by
- * newlines, commas or semicolons. Invalid entries are skipped silently — an
- * unreadable manual date simply leaves the domain "unknown" with instructions.
+ * Returns a Date only when `dateStr` is a strictly canonical YYYY-MM-DD value
+ * that also represents a real calendar date (e.g. "2024-02-30" is rejected
+ * because JS normalises it to March 1 instead of refusing it).
+ *
+ * Accepts nothing but 4-2-2 digit ISO dates so that operator typos like
+ * "2024-2-1" or "01/06/2025" are routed to the warning path.
  */
-function parseManualExpiries(): Map<string, Date> {
+function parseStrictDate(dateStr: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  if (isNaN(date.getTime())) return null;
+  // Round-trip: if JS normalised an impossible date (e.g. Feb 30 → Mar 1) the
+  // ISO string will no longer start with the original token.
+  if (!date.toISOString().startsWith(dateStr)) return null;
+  return date;
+}
+
+/**
+ * Parses the EXPIRY_MANUAL secret: entries `domein=JJJJ-MM-DD`, separated by
+ * newlines, commas or semicolons. Entries with an unreadable or invalid date
+ * are logged as a warning and collected in `malformed` so the caller can
+ * surface a helpful hint (instead of silently falling back to the generic
+ * "no entry" message).
+ */
+function parseManualExpiries(): { valid: Map<string, Date>; malformed: Set<string> } {
   const raw = process.env.EXPIRY_MANUAL ?? "";
-  const map = new Map<string, Date>();
+  const valid = new Map<string, Date>();
+  const malformed = new Set<string>();
   for (const entry of raw.split(/[\n,;]+/)) {
     const [domain, dateStr] = entry.split("=").map((s) => s?.trim());
     if (!domain || !dateStr) continue;
-    const date = new Date(`${dateStr}T00:00:00Z`);
-    if (!isNaN(date.getTime())) map.set(domain.toLowerCase(), date);
+    const date = parseStrictDate(dateStr);
+    if (date !== null) {
+      valid.set(domain.toLowerCase(), date);
+    } else {
+      logger.warn(
+        { entry },
+        "EXPIRY_MANUAL bevat een ongeldige datum — vermelding wordt genegeerd",
+      );
+      malformed.add(domain.toLowerCase());
+    }
   }
-  return map;
+  return { valid, malformed };
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
