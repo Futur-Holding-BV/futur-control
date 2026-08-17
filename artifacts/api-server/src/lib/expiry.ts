@@ -421,7 +421,15 @@ async function domainItems(): Promise<ExpiryItem[]> {
     const backoffUntil = rdapBackoffUntil.get(domain) ?? 0;
     if (Date.now() < backoffUntil) {
       results.push(
-        await staleOrUnknown(base, domain, "het domeinregister is tijdelijk overbelast; verzoeken worden even overgeslagen"),
+        await staleOrUnknown(
+          base,
+          domain,
+          withMalformedHint(
+            "het domeinregister is tijdelijk overbelast; verzoeken worden even overgeslagen",
+            domain,
+            manual.malformed,
+          ),
+        ),
       );
       continue;
     }

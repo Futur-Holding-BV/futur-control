@@ -428,6 +428,61 @@ describe("niet-.nl-domein — malformed EXPIRY_MANUAL + RDAP mislukt", () => {
   });
 });
 
+describe("niet-.nl-domein — malformed EXPIRY_MANUAL + RDAP 429 + geen cache", () => {
+  let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
+
+  beforeAll(async () => {
+    // Fresh module → domainLastKnown is empty; no prior RDAP success cached.
+    isolateEnv();
+    ({ listExpiryItems } = await freshExpiry());
+  });
+  afterAll(() => {
+    delete process.env.EXPIRY_MANUAL;
+    restoreEnv();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("vermeldt zowel de 429-reden als de ongeldige handmatige datum als er geen cache is (eerste aanroep)", async () => {
+    process.env.EXPIRY_MANUAL = `${DOMAIN}=niet-een-datum`;
+    stubFetch(rdap429);
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${DOMAIN}`);
+
+    expect(domain).toBeDefined();
+    // No cached date → must be unknown, not a stale fallback.
+    expect(domain!.severity).toBe("unknown");
+    expect(domain!.staleNote).toBeNull();
+    // Must mention both the 429 backoff reason…
+    expect(domain!.unknownReason).toMatch(/429/);
+    // …and the broken EXPIRY_MANUAL entry so the operator can fix it.
+    expect(domain!.unknownReason).toMatch(/EXPIRY_MANUAL/);
+  });
+
+  it("vermeldt de ongeldige handmatige datum ook tijdens het actieve backoff-venster (tweede aanroep)", async () => {
+    // The previous test established the backoff window — RDAP must not be called.
+    process.env.EXPIRY_MANUAL = `${DOMAIN}=niet-een-datum`;
+    const spy = stubFetch(() => { throw new Error("should not be called during backoff"); });
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${DOMAIN}`);
+
+    // RDAP must have been skipped entirely (backoff window active).
+    const rdapCalls = spy.mock.calls.filter(([input]) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      return url.includes("rdap.org");
+    });
+    expect(rdapCalls).toHaveLength(0);
+
+    expect(domain).toBeDefined();
+    // Still no cached date → must remain unknown.
+    expect(domain!.severity).toBe("unknown");
+    expect(domain!.staleNote).toBeNull();
+    // The malformed EXPIRY_MANUAL hint must also appear during the backoff window.
+    expect(domain!.unknownReason).toMatch(/EXPIRY_MANUAL/);
+  });
+});
+
 describe("domeinverloopdatum — cache ouder dan 7 dagen", () => {
   let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
 
