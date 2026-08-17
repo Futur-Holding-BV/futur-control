@@ -350,6 +350,19 @@ async function staleOrUnknown(
   }
   return unknown(base, reason);
 }
+/**
+ * Appends a hint about a malformed EXPIRY_MANUAL entry to `reason` when the
+ * domain appears in the malformed set, so the operator sees both the RDAP
+ * problem and the broken manual entry in a single message.
+ */
+function withMalformedHint(reason: string, domain: string, malformed: Set<string>): string {
+  if (!malformed.has(domain.toLowerCase())) return reason;
+  return (
+    `${reason}; bovendien staat er een ongeldige datum in EXPIRY_MANUAL voor dit domein` +
+    ` — controleer de notatie (verwacht: ${domain}=JJJJ-MM-DD)`
+  );
+}
+
 async function domainItems(): Promise<ExpiryItem[]> {
   const domainsEnv = process.env.EXPIRY_DOMAINS;
   const consequence =
@@ -416,7 +429,16 @@ async function domainItems(): Promise<ExpiryItem[]> {
     try {
       const date = await domainExpiry(domain);
       if (!date) {
-        results.push(unknown(base, "het domeinregister publiceert geen verloopdatum voor deze extensie"));
+        results.push(
+          unknown(
+            base,
+            withMalformedHint(
+              "het domeinregister publiceert geen verloopdatum voor deze extensie",
+              domain,
+              manual.malformed,
+            ),
+          ),
+        );
       } else {
         domainLastKnown.set(domain, { date, fetchedAt: Date.now() });
         // Fire-and-forget: persist to DB so the stale fallback survives restarts.
@@ -427,14 +449,28 @@ async function domainItems(): Promise<ExpiryItem[]> {
       if (err instanceof RdapRateLimitError) {
         rdapBackoffUntil.set(domain, Date.now() + err.backoffMs);
         logger.warn({ domain, backoffMs: err.backoffMs }, "RDAP 429 — domein tijdelijk overgeslagen");
-        results.push(await staleOrUnknown(base, domain, "het domeinregister vraagt om minder verzoeken (429)"));
+        results.push(
+          await staleOrUnknown(
+            base,
+            domain,
+            withMalformedHint(
+              "het domeinregister vraagt om minder verzoeken (429)",
+              domain,
+              manual.malformed,
+            ),
+          ),
+        );
       } else {
         logger.warn({ err, domain }, "RDAP-verzoek mislukt");
         results.push(
           await staleOrUnknown(
             base,
             domain,
-            `verloopdatum kon niet worden opgevraagd (${err instanceof Error ? err.message : "onbekende fout"})`,
+            withMalformedHint(
+              `verloopdatum kon niet worden opgevraagd (${err instanceof Error ? err.message : "onbekende fout"})`,
+              domain,
+              manual.malformed,
+            ),
           ),
         );
       }

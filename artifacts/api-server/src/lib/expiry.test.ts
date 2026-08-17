@@ -370,6 +370,64 @@ describe(".nl-domein — handmatig invoer (EXPIRY_MANUAL)", () => {
   });
 });
 
+describe("niet-.nl-domein — malformed EXPIRY_MANUAL + RDAP mislukt", () => {
+  let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
+
+  beforeAll(async () => {
+    // isolateEnv sets EXPIRY_DOMAINS = DOMAIN (example.com), which is non-.nl.
+    isolateEnv();
+    ({ listExpiryItems } = await freshExpiry());
+  });
+  afterAll(() => {
+    delete process.env.EXPIRY_MANUAL;
+    restoreEnv();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("vermeldt zowel de RDAP-fout als de ongeldige handmatige datum als RDAP een 503 geeft", async () => {
+    process.env.EXPIRY_MANUAL = `${DOMAIN}=niet-een-datum`;
+    stubFetch(rdap503);
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${DOMAIN}`);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).toBe("unknown");
+    expect(domain!.expiresAt).toBeNull();
+    expect(domain!.staleNote).toBeNull();
+    // Must mention the RDAP problem.
+    expect(domain!.unknownReason).toMatch(/verloopdatum kon niet/);
+    // Must also mention the broken EXPIRY_MANUAL entry so the operator can fix it.
+    expect(domain!.unknownReason).toMatch(/EXPIRY_MANUAL/);
+  });
+
+  it("vermeldt de ongeldige handmatige datum ook als RDAP een netwerkfout geeft", async () => {
+    process.env.EXPIRY_MANUAL = `${DOMAIN}=niet-een-datum`;
+    stubFetch(() => { throw new Error("network error"); });
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${DOMAIN}`);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).toBe("unknown");
+    expect(domain!.unknownReason).toMatch(/verloopdatum kon niet/);
+    expect(domain!.unknownReason).toMatch(/EXPIRY_MANUAL/);
+  });
+
+  it("raakt niet de malformed-hint als EXPIRY_MANUAL leeg is en RDAP mislukt", async () => {
+    delete process.env.EXPIRY_MANUAL;
+    stubFetch(rdap503);
+
+    const items = await listExpiryItems(true);
+    const domain = items.find((i) => i.id === `domain:${DOMAIN}`);
+
+    expect(domain).toBeDefined();
+    expect(domain!.severity).toBe("unknown");
+    // No EXPIRY_MANUAL hint should appear when there is no malformed entry.
+    expect(domain!.unknownReason).not.toMatch(/EXPIRY_MANUAL/);
+  });
+});
+
 describe("domeinverloopdatum — cache ouder dan 7 dagen", () => {
   let listExpiryItems: Awaited<ReturnType<typeof freshExpiry>>["listExpiryItems"];
 
