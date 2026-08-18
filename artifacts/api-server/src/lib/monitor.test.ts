@@ -428,3 +428,127 @@ describe("pollAll — advisory lock not acquired", () => {
     expect(notifyAnomaly).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: pollAll — staleness-red notification
+// ---------------------------------------------------------------------------
+
+describe("pollAll — staleness-red notification", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // Monday 2026-08-17 12:00 Amsterdam (10:00 UTC) — outside the quiet window.
+    vi.setSystemTime(new Date("2026-08-17T10:00:00Z"));
+    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(notifyRepoRed).mockResolvedValue(true);
+    vi.mocked(notifyAnomaly).mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.resetAllMocks();
+  });
+
+  it("calls notifyRepoRed when staleReason is set and does NOT call maybeAutoRetry", async () => {
+    // Repo has been stale-red for 30 minutes (past the 10-min debounce).
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "none",
+      notifiedAnomalySha: null,
+      problemSince: new Date(Date.now() - 30 * 60 * 1000),
+    });
+    vi.mocked(repoSummary).mockResolvedValue(
+      makeSummary({
+        status: "red",
+        staleReason: "laatste commit is 15 dagen oud (rode drempel: 14 dagen)",
+      }),
+    );
+
+    await pollAll();
+
+    // Slack notification must fire.
+    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    // Self-heal must be skipped — there is no failed run to rerun.
+    expect(maybeAutoRetry).not.toHaveBeenCalled();
+  });
+
+  it("re-alerts when a repo goes red again after recovering to yellow", async () => {
+    // ── Cycle 1: stale-red is notified ──────────────────────────────────────
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "none",
+      notifiedAnomalySha: null,
+      problemSince: new Date(Date.now() - 30 * 60 * 1000),
+    });
+    vi.mocked(repoSummary).mockResolvedValue(
+      makeSummary({
+        status: "red",
+        staleReason: "laatste commit is 15 dagen oud (rode drempel: 14 dagen)",
+      }),
+    );
+
+    await pollAll();
+
+    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    // notifiedStatus must have been persisted as "red".
+    const saved1 = savedSnapshot(0);
+    expect(saved1["notifiedStatus"]).toBe("red");
+
+    vi.resetAllMocks();
+
+    // ── Cycle 2: new commit → yellow (still stale but under the red threshold)
+    //    Recovery branch fires because yellow is not a problem status.
+    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(notifyRepoRed).mockResolvedValue(true);
+    vi.mocked(notifyAnomaly).mockResolvedValue(false);
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: new Date(Date.now() - 5 * 60 * 1000),
+      problemSince: null,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(
+      makeSummary({
+        status: "yellow",
+        staleReason: "laatste commit is 8 dagen oud (gele drempel: 7 dagen)",
+      }),
+    );
+
+    await pollAll();
+
+    // No new red notification expected during recovery.
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    // notifiedStatus must be reset to "yellow" so the next red re-alerts.
+    const saved2 = savedSnapshot(0);
+    expect(saved2["notifiedStatus"]).toBe("yellow");
+
+    vi.resetAllMocks();
+
+    // ── Cycle 3: repo goes stale-red again → must re-alert ──────────────────
+    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(notifyRepoRed).mockResolvedValue(true);
+    vi.mocked(notifyAnomaly).mockResolvedValue(false);
+    mockSnapshot({
+      status: "yellow",
+      notifiedStatus: "yellow",
+      notifiedAnomalySha: null,
+      lastRedNotifiedAt: null,
+      problemSince: new Date(Date.now() - 30 * 60 * 1000),
+    });
+    vi.mocked(repoSummary).mockResolvedValue(
+      makeSummary({
+        status: "red",
+        staleReason: "laatste commit is 15 dagen oud (rode drempel: 14 dagen)",
+      }),
+    );
+
+    await pollAll();
+
+    // A fresh red after recovery must fire another Slack notification.
+    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    expect(maybeAutoRetry).not.toHaveBeenCalled();
+  });
+});
