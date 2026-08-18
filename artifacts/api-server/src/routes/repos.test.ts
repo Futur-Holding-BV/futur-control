@@ -50,7 +50,7 @@ vi.mock("../lib/auth.js", () => ({
   sessionCookieOptions: vi.fn().mockReturnValue({}),
 }));
 
-import { listMonitoredRepos, repoSummary, GitHubError } from "../lib/github.js";
+import { listMonitoredRepos, repoSummary, repoDetail, GitHubError } from "../lib/github.js";
 import reposRouter from "./repos.js";
 // Full middleware stack (auth, cors, body-parsing, error handling) — imported
 // after all vi.mock() calls so every dependency is already stubbed.
@@ -259,6 +259,105 @@ describe("GET /api/repos — full middleware stack, GitHub unreachable", () => {
     );
 
     const res = await fullAgent.get("/api/repos");
+    expect(typeof res.body.error).toBe("string");
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/repos/:name/detail — GitHub unreachable
+//
+// These tests confirm that the detail route never returns an empty object when
+// GitHub is down. An empty object would leave the detail panel blank with no
+// explanation for the operator.
+// ---------------------------------------------------------------------------
+
+describe("GET /api/repos/:name/detail — GitHub unreachable (minimal stack)", () => {
+  beforeEach(() => {
+    vi.mocked(listMonitoredRepos).mockResolvedValue([GRAY_REPO_NAME]);
+  });
+
+  it("returns HTTP 502 when repoDetail throws a GitHubError", async () => {
+    vi.mocked(repoDetail).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /repos/fps-org/test-repo",
+        503,
+      ),
+    );
+
+    const res = await agent.get(`/api/repos/${encodeURIComponent(GRAY_REPO_NAME)}/detail`);
+    expect(res.status).toBe(502);
+  });
+
+  it("does NOT return an empty object when repoDetail throws a GitHubError", async () => {
+    vi.mocked(repoDetail).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /repos/fps-org/test-repo",
+        503,
+      ),
+    );
+
+    const res = await agent.get(`/api/repos/${encodeURIComponent(GRAY_REPO_NAME)}/detail`);
+    // An empty object {} would leave the detail panel silent — must not happen.
+    const body = res.body as Record<string, unknown>;
+    expect(Object.keys(body).length).toBeGreaterThan(0);
+  });
+
+  it("includes a non-empty error string in the body when repoDetail throws a GitHubError", async () => {
+    vi.mocked(repoDetail).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /repos/fps-org/test-repo",
+        503,
+      ),
+    );
+
+    const res = await agent.get(`/api/repos/${encodeURIComponent(GRAY_REPO_NAME)}/detail`);
+    expect(typeof res.body.error).toBe("string");
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+});
+
+describe("GET /api/repos/:name/detail — full middleware stack, GitHub unreachable", () => {
+  const fullAgent = supertest(fullApp);
+
+  beforeEach(() => {
+    vi.mocked(listMonitoredRepos).mockResolvedValue([GRAY_REPO_NAME]);
+  });
+
+  it("returns HTTP 502 through the full stack when repoDetail throws a GitHubError", async () => {
+    vi.mocked(repoDetail).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /repos/fps-org/test-repo",
+        503,
+      ),
+    );
+
+    const res = await fullAgent.get(`/api/repos/${encodeURIComponent(GRAY_REPO_NAME)}/detail`);
+    expect(res.status).toBe(502);
+  });
+
+  it("does NOT return an empty object through the full stack when repoDetail throws a GitHubError", async () => {
+    vi.mocked(repoDetail).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /repos/fps-org/test-repo",
+        503,
+      ),
+    );
+
+    const res = await fullAgent.get(`/api/repos/${encodeURIComponent(GRAY_REPO_NAME)}/detail`);
+    const body = res.body as Record<string, unknown>;
+    expect(Object.keys(body).length).toBeGreaterThan(0);
+  });
+
+  it("returns a non-empty error string through the full stack when repoDetail throws a GitHubError", async () => {
+    vi.mocked(repoDetail).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /repos/fps-org/test-repo",
+        503,
+      ),
+    );
+
+    const res = await fullAgent.get(`/api/repos/${encodeURIComponent(GRAY_REPO_NAME)}/detail`);
     expect(typeof res.body.error).toBe("string");
     expect(res.body.error.length).toBeGreaterThan(0);
   });
