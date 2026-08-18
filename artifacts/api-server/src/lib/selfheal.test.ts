@@ -303,3 +303,33 @@ describe("maybeAutoRetry — one retry per run", () => {
     expect(mockRerunFailedJobs).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// maybeAutoRetry — happy path: safe job, transient failure, no prior attempt
+// ---------------------------------------------------------------------------
+
+describe("maybeAutoRetry — safe transient failure triggers rerun", () => {
+  const repo = "fps-api";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns true and calls rerunFailedJobs once when a safe job fails transiently and no prior retry exists", async () => {
+    mockLatestRuns.mockResolvedValue([
+      { id: 200, status: "completed", conclusion: "failure", name: "CI", run_attempt: 1 },
+    ] as any);
+    mockFindAutoRetry.mockResolvedValue(null);
+    mockFailedRunErrorLines.mockResolvedValue(["ECONNRESET: socket hang up"]);
+    mockFailedJobNames.mockResolvedValue(["build"]);
+    mockLogAction.mockResolvedValue(42);
+    mockRerunFailedJobs.mockResolvedValue({ ok: true });
+    mockUpdateOutcome.mockResolvedValue(undefined as any);
+
+    const result = await maybeAutoRetry(repo);
+
+    expect(result).toBe(true);
+    expect(mockRerunFailedJobs).toHaveBeenCalledTimes(1);
+    expect(mockRerunFailedJobs).toHaveBeenCalledWith(repo, 200);
+  });
+});
