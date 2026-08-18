@@ -21,7 +21,9 @@ import {
   FileCode,
   Github,
   RefreshCw,
-  ServerCrash
+  ServerCrash,
+  ShieldAlert,
+  GitCommitHorizontal
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatExactDate, formatTimeAgo, cn } from "@/lib/utils";
@@ -309,6 +311,41 @@ export default function RepoDetail() {
           </div>
         </div>
       </div>
+
+      {/* Anomaly warning */}
+      {anomaly && (
+        <div className="group relative overflow-hidden rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 transition-all">
+          <div className="absolute inset-y-0 left-0 w-1 bg-amber-500" />
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pl-2">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 p-1 rounded-md bg-amber-500/20 text-amber-500">
+                <ShieldAlert className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-semibold text-amber-500">
+                  Afwijking gedetecteerd
+                </h3>
+                <p className="text-sm text-amber-200/80 leading-relaxed max-w-2xl">
+                  Ongewoon grote wijziging ({anomaly.linesChanged} regels) in{" "}
+                  <span className="font-mono text-xs bg-amber-950/50 px-1.5 py-0.5 rounded text-amber-300">
+                    {anomaly.fileName}
+                  </span>
+                  .
+                </p>
+                <div className="flex items-center gap-2 mt-2 text-xs text-amber-400/60">
+                  <GitCommitHorizontal className="h-3.5 w-3.5" />
+                  <span className="truncate max-w-[200px] sm:max-w-md">{anomaly.commitTitle}</span>
+                </div>
+              </div>
+            </div>
+            <Button asChild variant="outline" size="sm" className="shrink-0 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 hover:text-amber-300">
+              <a href={anomaly.commitUrl} target="_blank" rel="noopener noreferrer">
+                Bekijk Commit
+              </a>
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Staleness thresholds */}
       <StalenessSettings name={name} />
