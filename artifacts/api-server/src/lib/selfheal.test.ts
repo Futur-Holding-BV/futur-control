@@ -238,6 +238,21 @@ describe("maybeAutoRetry — forbidden job blocks rerun", () => {
     expect(mockRerunFailedJobs).not.toHaveBeenCalled();
     expect(mockLogAction).not.toHaveBeenCalled();
   });
+
+  it("returns false and never calls rerunFailedJobs when conclusion is timed_out and a job name is forbidden", async () => {
+    mockLatestRuns.mockResolvedValue([
+      { id: 101, status: "completed", conclusion: "timed_out", name: "CI", run_attempt: 1 },
+    ] as any);
+    mockFindAutoRetry.mockResolvedValue(null);
+    mockFailedRunErrorLines.mockResolvedValue([]);
+    mockFailedJobNames.mockResolvedValue(["deploy"]);
+
+    const result = await maybeAutoRetry(repo);
+
+    expect(result).toBe(false);
+    expect(mockRerunFailedJobs).not.toHaveBeenCalled();
+    expect(mockLogAction).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
