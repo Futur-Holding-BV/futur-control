@@ -288,6 +288,14 @@ export default function Home() {
                         </span>
                       </div>
                     )}
+                    {isGray && repo.staleReason && (
+                      <div className="mt-3 flex items-start gap-2 rounded-lg bg-muted/60 p-2.5 border border-border">
+                        <HelpCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                        <span className="text-sm text-muted-foreground leading-snug">
+                          {repo.staleReason}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 

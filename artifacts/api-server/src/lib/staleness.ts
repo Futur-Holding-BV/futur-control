@@ -47,6 +47,15 @@ export function applyStaleness(
           "geen commit-informatie beschikbaar — ouderdom van de code kan niet worden vastgesteld",
       };
     }
+    if (checkStatus === "gray") {
+      // No workflow runs AND no commit info: make the dual absence explicit so
+      // the dashboard can explain it rather than showing a bare gray dot.
+      return {
+        status: "gray",
+        staleReason:
+          "geen actieve GitHub Actions-checks gevonden en geen commit-informatie beschikbaar",
+      };
+    }
     return { status: checkStatus, staleReason: null };
   }
 

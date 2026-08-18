@@ -291,7 +291,9 @@ export default function RepoDetail() {
               {repoSummary?.staleReason && (
                 <p className={cn(
                   "max-w-2xl text-sm sm:text-base leading-relaxed",
-                  isRed ? "text-destructive/90" : "text-amber-600 dark:text-amber-400"
+                  isRed ? "text-destructive/90" :
+                  repo.status === "gray" ? "text-muted-foreground" :
+                  "text-amber-600 dark:text-amber-400"
                 )}>
                   {repoSummary.staleReason}
                 </p>
