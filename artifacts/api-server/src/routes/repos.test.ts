@@ -25,7 +25,7 @@ vi.mock("../lib/github.js", () => ({
   invalidateRepoCache: vi.fn(),
 }));
 
-import { listMonitoredRepos, repoSummary } from "../lib/github.js";
+import { listMonitoredRepos, repoSummary, GitHubError } from "../lib/github.js";
 import reposRouter from "./repos.js";
 
 // ---------------------------------------------------------------------------
@@ -124,5 +124,63 @@ describe("GET /api/repos — staleReason field", () => {
     // The schema uses nullish() so the field may be null or absent — either is fine.
     const reason = res.body[0].staleReason;
     expect(reason == null || reason === "").toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitHub unreachable — error path
+// ---------------------------------------------------------------------------
+
+describe("GET /api/repos — GitHub unreachable", () => {
+  it("returns HTTP 502 when listMonitoredRepos throws a GitHubError", async () => {
+    vi.mocked(listMonitoredRepos).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /orgs/fps-org/repos",
+        503,
+      ),
+    );
+
+    const res = await agent.get("/api/repos");
+    expect(res.status).toBe(502);
+  });
+
+  it("includes a non-empty error string in the body when listMonitoredRepos throws a GitHubError", async () => {
+    vi.mocked(listMonitoredRepos).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /orgs/fps-org/repos",
+        503,
+      ),
+    );
+
+    const res = await agent.get("/api/repos");
+    expect(typeof res.body.error).toBe("string");
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  it("returns HTTP 502 when repoSummary throws a GitHubError", async () => {
+    vi.mocked(listMonitoredRepos).mockResolvedValue([GRAY_REPO_NAME]);
+    vi.mocked(repoSummary).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 502 voor /repos/fps-org/test-repo",
+        502,
+      ),
+    );
+
+    const res = await agent.get("/api/repos");
+    expect(res.status).toBe(502);
+  });
+
+  it("includes a non-empty error string in the body when repoSummary throws a GitHubError", async () => {
+    vi.mocked(listMonitoredRepos).mockResolvedValue([GRAY_REPO_NAME]);
+    vi.mocked(repoSummary).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 502 voor /repos/fps-org/test-repo",
+        502,
+      ),
+    );
+
+    const res = await agent.get("/api/repos");
+    expect(typeof res.body.error).toBe("string");
+    expect(res.body.error.length).toBeGreaterThan(0);
   });
 });
