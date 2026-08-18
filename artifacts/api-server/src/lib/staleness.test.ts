@@ -16,6 +16,16 @@ describe("applyStaleness", () => {
     expect(result.staleReason).toContain("geen commit-informatie");
   });
 
+  it("gray checkStatus + null lastCommitAt: staleReason explains both absences", () => {
+    // Repo that has never run checks AND has no commit information.
+    // The dashboard must show a reason rather than a bare gray dot.
+    const result = applyStaleness("gray", null, thresholds, now);
+    expect(result.status).toBe("gray");
+    expect(result.staleReason).not.toBeNull();
+    expect(result.staleReason).toMatch(/checks/i);
+    expect(result.staleReason).toMatch(/commit/i);
+  });
+
   it("no commit information: an existing red stays red", () => {
     const result = applyStaleness("red", null, thresholds, now);
     expect(result.status).toBe("red");
