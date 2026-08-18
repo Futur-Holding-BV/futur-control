@@ -466,28 +466,40 @@ async function failedCheckDetail(
 
 export interface RepoDetail {
   name: string;
+
   status: Status;
   /** Set when the staleness check influenced the status (plain Dutch). */
+
   staleReason: string | null;
+
   lastPushAt: string | null;
+
   lastCommitTitle: string | null;
+
   failReason: string | null;
+
   htmlUrl: string | null;
+
   checks: CheckRunInfo[];
+
   failedCheck: FailedCheckDetail | null;
   /** True when the latest check succeeded only after an automatic retry. */
+
   recoveredAfterRetry: boolean;
+
+  anomaly: Anomaly | null;
 }
 
 async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
   const org = githubOrg();
 
-  const [repoInfo, commits, runs] = await Promise.all([
+  const [repoInfo, commits, runs, anomaly] = await Promise.all([
     ghJson<GhRepo>(`/repos/${org}/${repo}`).catch(() => null),
     ghJson<GhCommitListItem[]>(`/repos/${org}/${repo}/commits?per_page=1`).catch(
       () => [] as GhCommitListItem[],
     ),
     latestRuns(repo, 5).catch(() => [] as GhWorkflowRun[]),
+    detectAnomaly(repo),
   ]);
 
   const latest = runs[0];
@@ -543,6 +555,7 @@ async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
     htmlUrl: repoInfo?.html_url ?? null,
     checks,
     failedCheck,
+    anomaly,
     recoveredAfterRetry,
   };
 }

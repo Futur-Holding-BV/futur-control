@@ -132,6 +132,7 @@ export default function RepoDetail() {
 
   const repoSummary = repos?.find(r => r.name === name);
   const recoveredAfterRetry = repoSummary?.recoveredAfterRetry ?? repo?.recoveredAfterRetry;
+  const anomaly = repoSummary?.anomaly ?? repo?.anomaly ?? null;
   const repoProposals = proposals?.filter(p => p.repo === name) || [];
 
   const handleRefresh = () => {

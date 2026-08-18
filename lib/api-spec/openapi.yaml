@@ -572,6 +572,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/FailedCheckDetail"
             - type: "null"
+        anomaly:
+          oneOf:
+            - $ref: "#/components/schemas/AnomalyAlert"
+            - type: "null"
         recoveredAfterRetry:
           type: boolean
           description: True when the latest check succeeded only after an automatic retry ("hersteld na herhaling")

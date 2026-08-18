@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AnomalyAlert } from './anomalyAlert';
 import type { CheckRun } from './checkRun';
 import type { FailedCheckDetail } from './failedCheckDetail';
 import type { RepoDetailStatus } from './repoDetailStatus';
@@ -27,6 +28,7 @@ export interface RepoDetail {
   htmlUrl?: string | null;
   checks: CheckRun[];
   failedCheck?: FailedCheckDetail | null;
+  anomaly?: AnomalyAlert | null;
   /** True when the latest check succeeded only after an automatic retry ("hersteld na herhaling") */
   recoveredAfterRetry?: boolean;
 }

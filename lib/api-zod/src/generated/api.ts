@@ -70,6 +70,13 @@ export const GetRepoDetailResponse = zod.object({
   "errorLines": zod.array(zod.string()).describe('First ten error lines from the failed run\'s log'),
   "logUrl": zod.string().describe('Link to the full log on GitHub')
 }),zod.null()]).optional(),
+  "anomaly": zod.union([zod.object({
+  "commitSha": zod.string(),
+  "commitTitle": zod.string(),
+  "fileName": zod.string(),
+  "linesChanged": zod.number().describe('Total lines added plus deleted for the file in this commit'),
+  "commitUrl": zod.string()
+}),zod.null()]).optional(),
   "recoveredAfterRetry": zod.boolean().optional().describe('True when the latest check succeeded only after an automatic retry (\"hersteld na herhaling\")')
 })
 
