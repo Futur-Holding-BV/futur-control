@@ -572,6 +572,9 @@ components:
           oneOf:
             - $ref: "#/components/schemas/FailedCheckDetail"
             - type: "null"
+        recoveredAfterRetry:
+          type: boolean
+          description: True when the latest check succeeded only after an automatic retry ("hersteld na herhaling")
     NotificationSettings:
       type: object
       required: [enabled, slackWebhookConfigured]

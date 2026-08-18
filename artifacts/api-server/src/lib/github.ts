@@ -475,6 +475,8 @@ export interface RepoDetail {
   htmlUrl: string | null;
   checks: CheckRunInfo[];
   failedCheck: FailedCheckDetail | null;
+  /** True when the latest check succeeded only after an automatic retry. */
+  recoveredAfterRetry: boolean;
 }
 
 async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
@@ -520,6 +522,17 @@ async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
     url: run.html_url ?? null,
   }));
 
+  let recoveredAfterRetry = false;
+  if (status === "green" && latest && (latest.run_attempt ?? 1) > 1) {
+    const { wasRecoveredAfterRetry } = await import("./selfheal.js");
+    recoveredAfterRetry = await wasRecoveredAfterRetry(
+      repo,
+      latest.id,
+      latest.run_attempt,
+      latest.conclusion,
+    );
+  }
+
   return {
     name: repo,
     status,
@@ -530,6 +543,7 @@ async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
     htmlUrl: repoInfo?.html_url ?? null,
     checks,
     failedCheck,
+    recoveredAfterRetry,
   };
 }
 export function repoDetail(repo: string, bypass = false): Promise<RepoDetail> {

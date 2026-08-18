@@ -244,6 +244,8 @@ export interface RepoDetail {
   htmlUrl?: string | null;
   checks: CheckRun[];
   failedCheck?: FailedCheckDetail | null;
+  /** True when the latest check succeeded only after an automatic retry ("hersteld na herhaling") */
+  recoveredAfterRetry?: boolean;
 }
 
 export interface NotificationSettings {

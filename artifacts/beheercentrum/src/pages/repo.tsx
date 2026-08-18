@@ -131,7 +131,7 @@ export default function RepoDetail() {
   const { data: proposals } = useListProposals();
 
   const repoSummary = repos?.find(r => r.name === name);
-  const recoveredAfterRetry = repoSummary?.recoveredAfterRetry;
+  const recoveredAfterRetry = repoSummary?.recoveredAfterRetry ?? repo?.recoveredAfterRetry;
   const repoProposals = proposals?.filter(p => p.repo === name) || [];
 
   const handleRefresh = () => {
