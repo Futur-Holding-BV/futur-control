@@ -25,8 +25,36 @@ vi.mock("../lib/github.js", () => ({
   invalidateRepoCache: vi.fn(),
 }));
 
+// Needed when importing the full app — prevent DB and background-monitor side
+// effects from running inside unit tests.
+vi.mock("@workspace/db", () => ({
+  ensureTablesExist: vi.fn().mockResolvedValue(undefined),
+  db: {},
+}));
+
+vi.mock("../lib/monitor.js", () => ({
+  startMonitor: vi.fn(),
+}));
+
+// Replace requireAuth with a pass-through so the full-stack tests can reach the
+// route handler without a real session cookie.
+vi.mock("../lib/auth.js", () => ({
+  requireAuth: vi.fn(
+    (
+      _req: import("express").Request,
+      _res: import("express").Response,
+      next: import("express").NextFunction,
+    ) => next(),
+  ),
+  cleanupExpiredLoginAttempts: vi.fn().mockResolvedValue(undefined),
+  sessionCookieOptions: vi.fn().mockReturnValue({}),
+}));
+
 import { listMonitoredRepos, repoSummary, GitHubError } from "../lib/github.js";
 import reposRouter from "./repos.js";
+// Full middleware stack (auth, cors, body-parsing, error handling) — imported
+// after all vi.mock() calls so every dependency is already stubbed.
+import fullApp from "../app.js";
 
 // ---------------------------------------------------------------------------
 // Minimal test app
@@ -180,6 +208,57 @@ describe("GET /api/repos — GitHub unreachable", () => {
     );
 
     const res = await agent.get("/api/repos");
+    expect(typeof res.body.error).toBe("string");
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Full middleware stack — GitHub unreachable
+//
+// These tests drive the complete Express app (cors, cookie-parser, pino-http,
+// requireAuth, error middleware) to confirm that no middleware layer silently
+// swallows the GitHubError and returns an empty array in its place.
+// ---------------------------------------------------------------------------
+
+describe("GET /api/repos — full middleware stack, GitHub unreachable", () => {
+  const fullAgent = supertest(fullApp);
+
+  it("does NOT return an empty array when listMonitoredRepos throws a GitHubError", async () => {
+    vi.mocked(listMonitoredRepos).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /orgs/fps-org/repos",
+        503,
+      ),
+    );
+
+    const res = await fullAgent.get("/api/repos");
+    // The body must not be an empty array — that would leave the dashboard blank
+    // with no explanation for the operator.
+    expect(Array.isArray(res.body) && res.body.length === 0).toBe(false);
+  });
+
+  it("returns HTTP 502 through the full stack when listMonitoredRepos throws a GitHubError", async () => {
+    vi.mocked(listMonitoredRepos).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /orgs/fps-org/repos",
+        503,
+      ),
+    );
+
+    const res = await fullAgent.get("/api/repos");
+    expect(res.status).toBe(502);
+  });
+
+  it("returns a non-empty error string in the body through the full stack when GitHub is down", async () => {
+    vi.mocked(listMonitoredRepos).mockRejectedValue(
+      new (GitHubError as unknown as new (msg: string, status: number) => Error)(
+        "GitHub API 503 voor /orgs/fps-org/repos",
+        503,
+      ),
+    );
+
+    const res = await fullAgent.get("/api/repos");
     expect(typeof res.body.error).toBe("string");
     expect(res.body.error.length).toBeGreaterThan(0);
   });
