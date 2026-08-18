@@ -288,14 +288,14 @@ export default function RepoDetail() {
                   {repo.failReason}
                 </p>
               )}
-              {repoSummary?.staleReason && (
+              {(repoSummary?.staleReason ?? repo.staleReason) && (
                 <p className={cn(
                   "max-w-2xl text-sm sm:text-base leading-relaxed",
                   isRed ? "text-destructive/90" :
                   repo.status === "gray" ? "text-muted-foreground" :
                   "text-amber-600 dark:text-amber-400"
                 )}>
-                  {repoSummary.staleReason}
+                  {repoSummary?.staleReason ?? repo.staleReason}
                 </p>
               )}
               {repo.lastCommitTitle && (

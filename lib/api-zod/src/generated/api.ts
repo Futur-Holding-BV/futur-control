@@ -53,6 +53,7 @@ export const GetRepoDetailParams = zod.object({
 export const GetRepoDetailResponse = zod.object({
   "name": zod.string(),
   "status": zod.enum(['green', 'yellow', 'red', 'gray']),
+  "staleReason": zod.string().nullish().describe('Plain-language explanation when the status was influenced by the staleness check (Dutch)'),
   "lastPushAt": zod.coerce.date().nullish(),
   "lastCommitTitle": zod.string().nullish(),
   "failReason": zod.string().nullish(),

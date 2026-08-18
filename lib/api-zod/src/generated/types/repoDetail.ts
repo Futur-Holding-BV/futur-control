@@ -12,6 +12,11 @@ import type { RepoDetailStatus } from './repoDetailStatus';
 export interface RepoDetail {
   name: string;
   status: RepoDetailStatus;
+  /**
+     * Plain-language explanation when the status was influenced by the staleness check (Dutch)
+     * @nullable
+     */
+  staleReason?: string | null;
   /** @nullable */
   lastPushAt?: Date | null;
   /** @nullable */

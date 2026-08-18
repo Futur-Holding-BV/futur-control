@@ -467,6 +467,8 @@ async function failedCheckDetail(
 export interface RepoDetail {
   name: string;
   status: Status;
+  /** Set when the staleness check influenced the status (plain Dutch). */
+  staleReason: string | null;
   lastPushAt: string | null;
   lastCommitTitle: string | null;
   failReason: string | null;
@@ -521,6 +523,7 @@ async function fetchRepoDetail(repo: string): Promise<RepoDetail> {
   return {
     name: repo,
     status,
+    staleReason: stale.staleReason,
     lastPushAt: repoInfo?.pushed_at ?? null,
     lastCommitTitle: commits[0] ? commitTitle(commits[0].commit.message) : null,
     failReason,

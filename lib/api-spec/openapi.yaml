@@ -552,6 +552,9 @@ components:
         status:
           type: string
           enum: [green, yellow, red, gray]
+        staleReason:
+          type: ["string", "null"]
+          description: Plain-language explanation when the status was influenced by the staleness check (Dutch)
         lastPushAt:
           type: ["string", "null"]
           format: date-time
