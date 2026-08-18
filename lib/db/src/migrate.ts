@@ -118,6 +118,16 @@ export async function ensureTablesExist(): Promise<void> {
       )
     `);
 
+    // ── api_keys ────────────────────────────────────────────────────────────
+    // Read-only machine-to-machine keys (e.g. Connect status block).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        name       TEXT PRIMARY KEY,
+        key        TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
     // ── repo_settings ───────────────────────────────────────────────────────
     // Per-repository staleness thresholds (days without a commit before the
     // repo turns yellow/red). Repos without a row use the defaults 7/14.

@@ -4,3 +4,4 @@ export * from "./domainExpiryCache";
 export * from "./loginAttempts";
 export * from "./repoSettings";
 export * from "./pushSubscriptions";
+export * from "./apiKeys";

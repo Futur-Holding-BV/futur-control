@@ -162,6 +162,42 @@ export const SendPushTestResponse = zod.object({
 
 
 /**
+ * @summary List external read-only API keys (names only, never the key value)
+ */
+export const ListLeesSleutelsResponse = zod.object({
+  "sleutels": zod.array(zod.object({
+  "naam": zod.string(),
+  "aangemaakt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Create a named read-only key; the key value is returned exactly once
+ */
+export const CreateLeesSleutelBody = zod.object({
+  "naam": zod.string().describe('Name of the connected system (2-64 chars)')
+})
+
+export const CreateLeesSleutelResponse = zod.object({
+  "naam": zod.string(),
+  "sleutel": zod.string().describe('The key value, shown exactly once at creation')
+})
+
+
+/**
+ * @summary Revoke a read-only key without touching the others
+ */
+export const DeleteLeesSleutelParams = zod.object({
+  "naam": zod.coerce.string()
+})
+
+export const DeleteLeesSleutelResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
  * Read-only. Returns whether Slack notifications are enabled and whether a webhook URL is configured. The URL itself is never returned — it is set via the SLACK_WEBHOOK_URL environment variable (Replit Secrets).
  * @summary Get notification settings
  */

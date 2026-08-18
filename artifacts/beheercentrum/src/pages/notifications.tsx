@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PushSettingsCard } from "@/components/push-settings-card";
+import { LeesSleutelsCard } from "@/components/lees-sleutels-card";
 
 export default function NotificationsPage() {
   const { data: settings, isLoading } = useQuery({
@@ -124,6 +125,9 @@ export default function NotificationsPage() {
 
           {/* Push notifications on this device */}
           <PushSettingsCard />
+
+          {/* Leessleutels voor externe systemen */}
+          <LeesSleutelsCard />
 
           {/* Trigger info */}
           <div className="rounded-xl border border-border/50 bg-muted/30 p-5 flex flex-col gap-2">

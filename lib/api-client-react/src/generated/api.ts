@@ -25,6 +25,9 @@ import type {
   ApiErrorMessage,
   ExpiryItem,
   HealthStatus,
+  LeesSleutelAangemaakt,
+  LeesSleutelAanmaakVerzoek,
+  LeesSleutelLijst,
   ListExpiryItemsParams,
   NotificationSettings,
   Proposal,
@@ -738,6 +741,225 @@ export const useSendPushTest = <TError = ErrorType<ApiErrorMessage>,
         TContext
       > => {
       return useMutation(getSendPushTestMutationOptions(options));
+    }
+
+export const getListLeesSleutelsUrl = () => {
+
+
+
+
+  return `/api/extern/sleutels`
+}
+
+/**
+ * @summary List external read-only API keys (names only, never the key value)
+ */
+export const listLeesSleutels = async ( options?: Parameters<typeof customFetch>[1]): Promise<LeesSleutelLijst> => {
+
+  return customFetch<LeesSleutelLijst>(getListLeesSleutelsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListLeesSleutelsQueryKey = () => {
+    return [
+    `/api/extern/sleutels`
+    ] as const;
+    }
+
+
+export const getListLeesSleutelsQueryOptions = <TData = Awaited<ReturnType<typeof listLeesSleutels>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listLeesSleutels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLeesSleutelsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLeesSleutels>>> = ({ signal }) => listLeesSleutels({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLeesSleutels>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListLeesSleutelsQueryResult = NonNullable<Awaited<ReturnType<typeof listLeesSleutels>>>
+export type ListLeesSleutelsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List external read-only API keys (names only, never the key value)
+ */
+
+export function useListLeesSleutels<TData = Awaited<ReturnType<typeof listLeesSleutels>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listLeesSleutels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListLeesSleutelsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateLeesSleutelUrl = () => {
+
+
+
+
+  return `/api/extern/sleutels`
+}
+
+/**
+ * @summary Create a named read-only key; the key value is returned exactly once
+ */
+export const createLeesSleutel = async (leesSleutelAanmaakVerzoek: LeesSleutelAanmaakVerzoek, options?: Parameters<typeof customFetch>[1]): Promise<LeesSleutelAangemaakt> => {
+
+  return customFetch<LeesSleutelAangemaakt>(getCreateLeesSleutelUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(leesSleutelAanmaakVerzoek)
+  }
+);}
+
+
+
+
+
+export const getCreateLeesSleutelMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLeesSleutel>>, TError,{data: BodyType<LeesSleutelAanmaakVerzoek>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createLeesSleutel>>, TError,{data: BodyType<LeesSleutelAanmaakVerzoek>}, TContext> => {
+
+const mutationKey = ['createLeesSleutel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLeesSleutel>>, {data: BodyType<LeesSleutelAanmaakVerzoek>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createLeesSleutel(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateLeesSleutelMutationResult = NonNullable<Awaited<ReturnType<typeof createLeesSleutel>>>
+    export type CreateLeesSleutelMutationBody = BodyType<LeesSleutelAanmaakVerzoek>
+    export type CreateLeesSleutelMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Create a named read-only key; the key value is returned exactly once
+ */
+export const useCreateLeesSleutel = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLeesSleutel>>, TError,{data: BodyType<LeesSleutelAanmaakVerzoek>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createLeesSleutel>>,
+        TError,
+        {data: BodyType<LeesSleutelAanmaakVerzoek>},
+        TContext
+      > => {
+      return useMutation(getCreateLeesSleutelMutationOptions(options));
+    }
+
+export const getDeleteLeesSleutelUrl = (naam: string,) => {
+
+
+
+
+  return `/api/extern/sleutels/${naam}`
+}
+
+/**
+ * @summary Revoke a read-only key without touching the others
+ */
+export const deleteLeesSleutel = async (naam: string, options?: Parameters<typeof customFetch>[1]): Promise<PushOk> => {
+
+  return customFetch<PushOk>(getDeleteLeesSleutelUrl(naam),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteLeesSleutelMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteLeesSleutel>>, TError,{naam: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteLeesSleutel>>, TError,{naam: string}, TContext> => {
+
+const mutationKey = ['deleteLeesSleutel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteLeesSleutel>>, {naam: string}> = (props) => {
+          const {naam} = props ?? {};
+
+          return  deleteLeesSleutel(naam,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteLeesSleutelMutationResult = NonNullable<Awaited<ReturnType<typeof deleteLeesSleutel>>>
+
+    export type DeleteLeesSleutelMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Revoke a read-only key without touching the others
+ */
+export const useDeleteLeesSleutel = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteLeesSleutel>>, TError,{naam: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteLeesSleutel>>,
+        TError,
+        {naam: string},
+        TContext
+      > => {
+      return useMutation(getDeleteLeesSleutelMutationOptions(options));
     }
 
 export const getGetNotificationSettingsUrl = () => {

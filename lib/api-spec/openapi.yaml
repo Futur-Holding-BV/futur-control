@@ -217,6 +217,65 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorMessage"
+  /extern/sleutels:
+    get:
+      operationId: listLeesSleutels
+      tags: [extern]
+      summary: List external read-only API keys (names only, never the key value)
+      responses:
+        "200":
+          description: Key list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeesSleutelLijst"
+    post:
+      operationId: createLeesSleutel
+      tags: [extern]
+      summary: Create a named read-only key; the key value is returned exactly once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeesSleutelAanmaakVerzoek"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeesSleutelAangemaakt"
+        "409":
+          description: Name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+  /extern/sleutels/{naam}:
+    delete:
+      operationId: deleteLeesSleutel
+      tags: [extern]
+      summary: Revoke a read-only key without touching the others
+      parameters:
+        - name: naam
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushOk"
+        "404":
+          description: Unknown key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
   /notifications/settings:
     get:
       operationId: getNotificationSettings
@@ -436,6 +495,39 @@ components:
       properties:
         ok:
           type: boolean
+    LeesSleutelInfo:
+      type: object
+      required: [naam, aangemaakt]
+      properties:
+        naam:
+          type: string
+        aangemaakt:
+          type: string
+          format: date-time
+    LeesSleutelLijst:
+      type: object
+      required: [sleutels]
+      properties:
+        sleutels:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeesSleutelInfo"
+    LeesSleutelAanmaakVerzoek:
+      type: object
+      required: [naam]
+      properties:
+        naam:
+          type: string
+          description: Name of the connected system (2-64 chars)
+    LeesSleutelAangemaakt:
+      type: object
+      required: [naam, sleutel]
+      properties:
+        naam:
+          type: string
+        sleutel:
+          type: string
+          description: The key value, shown exactly once at creation
     ApiErrorMessage:
       type: object
       required: [error]

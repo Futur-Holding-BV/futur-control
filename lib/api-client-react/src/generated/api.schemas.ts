@@ -113,6 +113,26 @@ export interface PushOk {
   ok: boolean;
 }
 
+export interface LeesSleutelInfo {
+  naam: string;
+  aangemaakt: string;
+}
+
+export interface LeesSleutelLijst {
+  sleutels: LeesSleutelInfo[];
+}
+
+export interface LeesSleutelAanmaakVerzoek {
+  /** Name of the connected system (2-64 chars) */
+  naam: string;
+}
+
+export interface LeesSleutelAangemaakt {
+  naam: string;
+  /** The key value, shown exactly once at creation */
+  sleutel: string;
+}
+
 export interface ApiErrorMessage {
   error: string;
 }
