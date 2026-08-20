@@ -102,6 +102,85 @@ async function post(
 // Public API
 // ---------------------------------------------------------------------------
 
+export interface SentryMelding {
+  issueKey: string;
+  project: string;
+  component: string;
+  handeling: string | null;
+  omgeving: string | null;
+  release: string | null;
+  issueUrl: string | null;
+  aantal: number;
+}
+
+function sentryRegel(melding: SentryMelding): string {
+  const context = [
+    melding.component,
+    melding.omgeving,
+    melding.release ? `release ${melding.release}` : null,
+    `${melding.aantal}×`,
+  ]
+    .filter((waarde): waarde is string => Boolean(waarde))
+    .join(" · ");
+  const issue = melding.issueUrl
+    ? `<${melding.issueUrl}|${melding.project} / ${melding.issueKey}>`
+    : `${melding.project} / ${melding.issueKey}`;
+  return `• ${issue} — ${melding.handeling ?? "overige handeling"} _(${context})_`;
+}
+
+/**
+ * Dit is bewust een beheercentrummelding: Sentry kent het Slack-kanaal niet
+ * en bepaalt evenmin het tijdstip of de urgentie.
+ */
+export async function notifySentryDirect(
+  melding: SentryMelding,
+): Promise<boolean> {
+  if (!isEnabled()) return false;
+  const webhookUrl = resolveWebhookUrl();
+  if (!webhookUrl) return false;
+  const payload = {
+    text: `Directe foutblokkade in ${melding.project}`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Directe foutblokkade*\n${sentryRegel(melding)}`,
+        },
+      },
+    ],
+  };
+  return post(webhookUrl, payload);
+}
+
+export async function notifySentryDagbundel(
+  meldingen: SentryMelding[],
+): Promise<boolean> {
+  if (!isEnabled() || meldingen.length === 0) return false;
+  const webhookUrl = resolveWebhookUrl();
+  if (!webhookUrl) return false;
+  const payload = {
+    text: `Dagbericht foutmonitoring: ${meldingen.length} actieve fouten`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Dagbericht foutmonitoring — ${meldingen.length} actieve fouten*`,
+        },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: meldingen.slice(0, 30).map(sentryRegel).join("\n"),
+        },
+      },
+    ],
+  };
+  return post(webhookUrl, payload);
+}
+
 /**
  * Notify Slack with a single summary message when multiple repositories
  * transition to red in the same poll cycle.
