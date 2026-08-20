@@ -5,6 +5,7 @@ import reposRouter from "./repos";
 import notificationsRouter from "./notifications";
 import expiryRouter from "./expiry";
 import actionsRouter from "./actions";
+import sentryRouter from "./sentry";
 import { requireAuth } from "../lib/auth.js";
 
 const router: IRouter = Router();
@@ -12,6 +13,7 @@ const router: IRouter = Router();
 // Public: health check and login. Everything below requireAuth needs a session.
 router.use(healthRouter);
 router.use(authRouter);
+router.use(sentryRouter);
 router.use(requireAuth);
 router.use(reposRouter);
 router.use(notificationsRouter);
