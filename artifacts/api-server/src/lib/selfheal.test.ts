@@ -363,3 +363,29 @@ describe("maybeAutoRetry — timed-out safe job triggers rerun", () => {
     expect(mockRerunFailedJobs).toHaveBeenCalledWith(repo, 201);
   });
 });
+
+// ---------------------------------------------------------------------------
+// maybeAutoRetry — code failures must not trigger rerun
+// ---------------------------------------------------------------------------
+
+describe("maybeAutoRetry — non-transient code failure does not trigger rerun", () => {
+  const repo = "fps-api";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns false and never reruns a safe job when the error is an assertion failure", async () => {
+    mockLatestRuns.mockResolvedValue([
+      { id: 202, status: "completed", conclusion: "failure", name: "CI", run_attempt: 1 },
+    ] as any);
+    mockFindAutoRetry.mockResolvedValue(null);
+    mockFailedRunErrorLines.mockResolvedValue(["AssertionError: expected 1 to equal 2"]);
+    mockFailedJobNames.mockResolvedValue(["test"]);
+
+    const result = await maybeAutoRetry(repo);
+
+    expect(result).toBe(false);
+    expect(mockRerunFailedJobs).not.toHaveBeenCalled();
+  });
+});
