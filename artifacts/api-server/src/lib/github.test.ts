@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { parseLinkNext, listMonitoredRepos } from "./github.js";
+import {
+  dispatchRestartWorkflow,
+  findRestartWorkflow,
+  listMonitoredRepos,
+  loadWorkflowRunDefinition,
+  parseLinkNext,
+} from "./github.js";
 
 // ---------------------------------------------------------------------------
 // parseLinkNext — pure unit tests
@@ -120,5 +126,203 @@ describe("listMonitoredRepos", () => {
       const headers = init?.headers as Record<string, string>;
       expect(headers["Authorization"]).toBe("Bearer test-token");
     }
+  });
+});
+
+describe("explicit restart workflow", () => {
+  beforeEach(() => {
+    process.env.GITHUB_TOKEN = "test-token";
+    process.env.GITHUB_ORG = "fps-test-org";
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("accepts only an active workflow named herstart with workflow_dispatch", async () => {
+    const yaml = Buffer.from("name: herstart\non:\n  workflow_dispatch:\n").toString("base64");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              {
+                id: 91,
+                name: "herstart",
+                state: "active",
+                path: ".github/workflows/herstart.yml",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([
+          { tag_name: "v1.2.3", immutable: true, draft: false },
+        ]), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ encoding: "base64", content: yaml }), {
+          status: 200,
+        }),
+      );
+
+    await expect(findRestartWorkflow("app-repo")).resolves.toEqual({
+      id: 91,
+      ref: "v1.2.3",
+      definition: {
+        name: "herstart",
+        on: { workflow_dispatch: null },
+      },
+    });
+  });
+
+  it("rejects a workflow where workflow_dispatch appears only in a comment", async () => {
+    const yaml = Buffer.from(
+      "name: herstart\non:\n  push:\n# workflow_dispatch:\n",
+    ).toString("base64");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              {
+                id: 91,
+                name: "herstart",
+                state: "active",
+                path: ".github/workflows/herstart.yml",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([
+          { tag_name: "v1.2.3", immutable: true, draft: false },
+        ]), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ encoding: "base64", content: yaml }), {
+          status: 200,
+        }),
+      );
+
+    await expect(findRestartWorkflow("app-repo")).resolves.toBeNull();
+  });
+
+  it("rejects an immutable tagged workflow whose own name is not herstart", async () => {
+    const yaml = Buffer.from(
+      "name: deploy\non:\n  workflow_dispatch:\n",
+    ).toString("base64");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              {
+                id: 91,
+                name: "herstart",
+                state: "active",
+                path: ".github/workflows/herstart.yml",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([
+          { tag_name: "v1.2.3", immutable: true, draft: false },
+        ]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ encoding: "base64", content: yaml }), {
+          status: 200,
+        }),
+      );
+
+    await expect(findRestartWorkflow("app-repo")).resolves.toBeNull();
+  });
+
+  it("loads the workflow definition from the exact commit used by the run", async () => {
+    const yaml = Buffer.from(
+      "name: CI\non: push\njobs:\n  build:\n    steps:\n      - run: pnpm test\n",
+    ).toString("base64");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ encoding: "base64", content: yaml }), {
+        status: 200,
+      }),
+    );
+
+    await expect(
+      loadWorkflowRunDefinition("app-repo", {
+        id: 8,
+        name: "CI",
+        display_title: "CI",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.test/run/8",
+        updated_at: "2026-08-20T10:00:00Z",
+        path: ".github/workflows/ci.yml",
+        head_sha: "abc123",
+      }),
+    ).resolves.toMatchObject({ name: "CI", jobs: expect.any(Object) });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/contents/.github/workflows/ci.yml?ref=abc123",
+    );
+  });
+
+  it("dispatches the verified workflow at its immutable release tag", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      dispatchRestartWorkflow("app-repo", {
+        id: 91,
+        ref: "v1.2.3",
+        definition: {},
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      message: "Herstartworkflow gestart vanaf een onveranderlijke release.",
+    });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify({ ref: "v1.2.3" }));
+  });
+
+  it("rejects a restart workflow when no immutable release exists", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workflows: [
+              {
+                id: 91,
+                name: "herstart",
+                state: "active",
+                path: ".github/workflows/herstart.yml",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([
+          { tag_name: "v1.2.3", immutable: false, draft: false },
+        ]), { status: 200 }),
+      );
+
+    await expect(findRestartWorkflow("app-repo")).resolves.toBeNull();
   });
 });

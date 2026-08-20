@@ -149,7 +149,10 @@ const MONDAY_0715_UTC = "2026-08-17T05:15:00Z"; // 07:15 Amsterdam (allowed)
 beforeEach(() => {
   vi.useFakeTimers();
   vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
-  vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+  vi.mocked(maybeAutoRetry).mockResolvedValue({
+    holdNotification: false,
+    escalationDetail: null,
+  });
   vi.mocked(notifyRepoRed).mockResolvedValue(true);
   vi.mocked(notifyMultipleReposRed).mockResolvedValue(true);
 });
@@ -289,8 +292,12 @@ describe("unknown status counts as a problem", () => {
       detail: expect.stringContaining("onbekend"),
     }));
     expect(savedSnapshot(0)["notifiedStatus"]).toBe("gray");
-    // Gray never triggers a self-heal rerun (nothing failed to rerun).
-    expect(maybeAutoRetry).not.toHaveBeenCalled();
+    // The helper is consulted because gray can be an in-progress automatic
+    // rerun; with no active chain it returns immediately without executing.
+    expect(maybeAutoRetry).toHaveBeenCalledWith(
+      "fps-api",
+      new Date("2026-08-17T10:00:00.000Z"),
+    );
   });
 
   it("gray does not re-notify once the problem was already notified", async () => {

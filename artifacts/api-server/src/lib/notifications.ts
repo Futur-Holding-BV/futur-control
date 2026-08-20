@@ -81,9 +81,11 @@ export async function notifyDailyFindings(
   findings: Array<{ title: string; detail: string }>,
   actions: Array<{ action: string; repo: string | null; outcome: string }> = [],
 ): Promise<boolean> {
-  const findingBody = findings.map((finding) => `• ${finding.title}\n  ${finding.detail}`).join("\n\n");
+  const findingBody = findings.length > 0
+    ? findings.map((finding) => `• ${finding.title}\n  ${finding.detail}`).join("\n\n")
+    : "Geen open aandachtspunten.";
   const actionBody = actions.length > 0
-    ? `\n\nUitgevoerde herstelhandelingen:\n${actions
+    ? `\n\nWat het systeem op mijn servers heeft gedaan:\n${actions
         .map((action) => `• ${action.action}${action.repo ? ` (${action.repo})` : ""}: ${action.outcome}`)
         .join("\n")}`
     : "";

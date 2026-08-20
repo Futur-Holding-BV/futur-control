@@ -1,10 +1,12 @@
 ---
 name: Self-heal boundaries
-description: Hard rules for the beheercentrum's automatic/one-tap GitHub Actions reruns
+description: Safety and immutability rules for automatic GitHub recovery actions
 ---
 
-Rule: `rerun-failed-jobs` re-executes whatever failed — including deploy/release/migration jobs. Any rerun path (automatic or button) must first check job/workflow names against `rerunForbidden()` in `artifacts/api-server/src/lib/selfheal.ts`.
+Rule: Same-version deploy/release reruns are allowed, but rollback, migration, backup restore, settings, secrets, permissions and firewall mutations are never automatic. Inspect the exact workflow definition used by the failed run, including dependent jobs—not only the failed job name.
 
-**Why:** the user's hard boundary is that the beheercentrum never deploys, restarts production, or changes code/database. A naive rerun of a failed "Deploy naar productie" workflow would redeploy.
+Service restart dispatch is allowed only through an explicitly mapped repo and a parsed workflow named exactly `herstart` with `workflow_dispatch`, loaded and dispatched from a GitHub-enforced immutable Release tag.
 
-**How to apply:** any new action type must (1) pass the forbidden-name filter at proposal time AND execute time, and (2) claim atomically by inserting into `action_log` first (unique partial index on repo+run_id for auto_retry) — no claim, no action. The execute route has no authentication yet; treat that as an open user decision before adding more powerful actions.
+**Why:** GitHub’s failed-job rerun can also execute dependent jobs. Workflow dispatch accepts mutable branch/tag names but not commit SHAs; an immutable Release tag prevents a reviewed restart workflow changing between validation and execution.
+
+**How to apply:** every external execution must consume an attempt through durable compare-and-swap incident state before the API call, remain capped at three executions across crashes/concurrency, and write its audit entry before acting. Fail closed when the exact workflow or immutable restart target cannot be verified.

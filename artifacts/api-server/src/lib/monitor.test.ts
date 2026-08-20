@@ -186,7 +186,10 @@ describe("pollAll — anomaly notification", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-17T10:00:00Z")); // Monday 12:00 Amsterdam
     vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
-    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(maybeAutoRetry).mockResolvedValue({
+      holdNotification: false,
+      escalationDetail: null,
+    });
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
     vi.mocked(notifyAnomaly).mockResolvedValue(true);
   });
@@ -290,7 +293,10 @@ describe("pollAll — full repo coverage", () => {
 
   beforeEach(() => {
     vi.mocked(listMonitoredRepos).mockResolvedValue(repos);
-    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(maybeAutoRetry).mockResolvedValue({
+      holdNotification: false,
+      escalationDetail: null,
+    });
     vi.mocked(notifyAnomaly).mockResolvedValue(true);
 
     // Each repo returns a green summary; snapshot returns null (first poll).
@@ -354,7 +360,10 @@ describe("pollAll — saveSnapshot failure handling", () => {
   });
   beforeEach(() => {
     vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
-    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(maybeAutoRetry).mockResolvedValue({
+      holdNotification: false,
+      escalationDetail: null,
+    });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "green" }));
     vi.mocked(notifyAnomaly).mockResolvedValue(true);
 
@@ -464,7 +473,10 @@ describe("pollAll — staleness-red notification", () => {
     // Monday 2026-08-17 12:00 Amsterdam (10:00 UTC) — outside the quiet window.
     vi.setSystemTime(new Date("2026-08-17T10:00:00Z"));
     vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
-    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(maybeAutoRetry).mockResolvedValue({
+      holdNotification: false,
+      escalationDetail: null,
+    });
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
     vi.mocked(notifyAnomaly).mockResolvedValue(false);
   });
@@ -528,7 +540,10 @@ describe("pollAll — staleness-red notification", () => {
     // ── Cycle 2: new commit → yellow (still stale but under the red threshold)
     //    Recovery branch fires because yellow is not a problem status.
     vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
-    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(maybeAutoRetry).mockResolvedValue({
+      holdNotification: false,
+      escalationDetail: null,
+    });
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
     vi.mocked(notifyAnomaly).mockResolvedValue(false);
     mockSnapshot({
@@ -557,7 +572,10 @@ describe("pollAll — staleness-red notification", () => {
 
     // ── Cycle 3: repo goes stale-red again → must re-alert ──────────────────
     vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
-    vi.mocked(maybeAutoRetry).mockResolvedValue(false);
+    vi.mocked(maybeAutoRetry).mockResolvedValue({
+      holdNotification: false,
+      escalationDetail: null,
+    });
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
     vi.mocked(notifyAnomaly).mockResolvedValue(false);
     mockSnapshot({

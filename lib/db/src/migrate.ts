@@ -65,13 +65,38 @@ export async function ensureTablesExist(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
-
-    // Guarantees "at most one automatic retry per run" even under
-    // concurrent monitor cycles: the log INSERT acts as an atomic claim.
     await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS action_log_auto_retry_unique
-        ON action_log (repo, run_id)
-        WHERE kind = 'auto_retry'
+      ALTER TABLE action_log
+        ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ
+    `);
+
+    // Retry ownership now lives in self_heal_incidents. Multiple action-log
+    // rows are deliberately allowed so every individual attempt remains
+    // visible in the audit trail and the daily report.
+    await client.query(`
+      DROP INDEX IF EXISTS action_log_auto_retry_unique
+    `);
+    await client.query(`
+      DROP INDEX IF EXISTS action_log_auto_retry_attempt_unique
+    `);
+
+    // Durable, atomic state for bounded automatic recovery. The primary key
+    // is the incident claim: one GitHub run or one public service outage.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS self_heal_incidents (
+        incident_key          TEXT PRIMARY KEY,
+        kind                  TEXT NOT NULL,
+        repo                  TEXT NOT NULL,
+        target_id             TEXT NOT NULL,
+        attempts              INTEGER NOT NULL DEFAULT 0,
+        status                TEXT NOT NULL,
+        next_attempt_at       TIMESTAMPTZ,
+        observed_run_attempt  INTEGER,
+        last_action_log_id    INTEGER,
+        history               JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
     `);
 
     // ── domain_expiry_cache ──────────────────────────────────────────────────

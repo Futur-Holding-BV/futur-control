@@ -280,15 +280,23 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
   // (staleReason set) or an unknown status never enters the self-heal
   // chain: there is no failed run to rerun.
   if (
-    summary.status === "red" &&
+    (summary.status === "red" || summary.status === "gray") &&
     !isProblem(notifiedStatus) &&
     !summary.staleReason
   ) {
     if (problemSince === now) {
       logger.info({ repo: repoName, notifiedStatus }, "Statusovergang naar rood gedetecteerd");
     }
-    const retryStarted = await maybeAutoRetry(repoName);
-    if (retryStarted) {
+    const selfHeal = await maybeAutoRetry(repoName, now);
+    if (selfHeal.escalationDetail) {
+      summary = {
+        ...summary,
+        failReason: [summary.failReason, selfHeal.escalationDetail]
+          .filter(Boolean)
+          .join("\n\n"),
+      };
+    }
+    if (selfHeal.holdNotification) {
       isNewRed = false;
     }
   }

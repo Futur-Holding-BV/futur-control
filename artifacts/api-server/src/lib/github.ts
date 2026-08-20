@@ -3,6 +3,7 @@
  * Uses GITHUB_TOKEN and GITHUB_ORG from the environment.
  * Never performs any write operation.
  */
+import { parse } from "yaml";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -152,6 +153,9 @@ export interface GhWorkflowRun {
   html_url: string;
   updated_at: string;
   run_attempt?: number;
+  /** Workflow definition and exact commit used by this run. */
+  path?: string;
+  head_sha?: string;
 }
 
 interface GhJob {
@@ -373,6 +377,7 @@ export async function rerunFailedJobs(
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
       },
+      signal: AbortSignal.timeout(30_000),
     },
   );
   if (res.status === 201) {
@@ -389,6 +394,121 @@ export async function rerunFailedJobs(
     ok: false,
     message: `GitHub weigerde de herstart (status ${res.status}).`,
   };
+}
+
+interface GhWorkflow {
+  id: number;
+  name: string;
+  state: string;
+  path: string;
+}
+
+export interface RestartWorkflowTarget {
+  id: number;
+  ref: string;
+  definition: unknown;
+}
+
+function decodeWorkflowYaml(content: { content?: string; encoding?: string }): string | null {
+  if (content.encoding !== "base64" || !content.content) return null;
+  return Buffer.from(content.content.replace(/\s/g, ""), "base64").toString("utf8");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasWorkflowDispatch(definition: unknown): boolean {
+  if (!isRecord(definition)) return false;
+  const triggers = definition["on"];
+  if (triggers === "workflow_dispatch") return true;
+  if (Array.isArray(triggers)) return triggers.includes("workflow_dispatch");
+  return isRecord(triggers) &&
+    Object.prototype.hasOwnProperty.call(triggers, "workflow_dispatch");
+}
+
+/** Finds an active workflow named "herstart" that declares workflow_dispatch. */
+export async function findRestartWorkflow(
+  repo: string,
+): Promise<RestartWorkflowTarget | null> {
+  const org = githubOrg();
+  const [workflows, releases] = await Promise.all([
+    ghJson<{ workflows: GhWorkflow[] }>(`/repos/${org}/${repo}/actions/workflows?per_page=100`),
+    ghJson<{
+      tag_name: string;
+      immutable?: boolean;
+      draft?: boolean;
+    }[]>(`/repos/${org}/${repo}/releases?per_page=100`),
+  ]);
+  const workflow = (workflows.workflows ?? []).find(
+    (candidate) => candidate.state === "active" && candidate.name.trim().toLowerCase() === "herstart",
+  );
+  if (!workflow) return null;
+
+  for (const release of releases) {
+    if (!release.immutable || release.draft || !release.tag_name) continue;
+    try {
+      const content = await ghJson<{ content?: string; encoding?: string }>(
+        `/repos/${org}/${repo}/contents/${workflow.path}?ref=${encodeURIComponent(release.tag_name)}`,
+      );
+      const yaml = decodeWorkflowYaml(content);
+      if (!yaml) continue;
+      const definition: unknown = parse(yaml);
+      if (
+        !isRecord(definition) ||
+        definition["name"] !== "herstart" ||
+        !hasWorkflowDispatch(definition)
+      ) continue;
+      return {
+        id: workflow.id,
+        ref: release.tag_name,
+        definition,
+      };
+    } catch {
+      // Deze release bevatte het huidige herstartpad niet; probeer de volgende.
+    }
+  }
+  return null;
+}
+
+/** Loads the exact workflow definition used by a run, never the current branch. */
+export async function loadWorkflowRunDefinition(
+  repo: string,
+  run: GhWorkflowRun,
+): Promise<unknown | null> {
+  if (!run.path || !run.head_sha) return null;
+  const org = githubOrg();
+  const content = await ghJson<{ content?: string; encoding?: string }>(
+    `/repos/${org}/${repo}/contents/${run.path}?ref=${encodeURIComponent(run.head_sha)}`,
+  );
+  const yaml = decodeWorkflowYaml(content);
+  return yaml ? parse(yaml) : null;
+}
+
+/** Dispatches a restart workflow at a GitHub-enforced immutable release tag. */
+export async function dispatchRestartWorkflow(
+  repo: string,
+  workflow: RestartWorkflowTarget,
+): Promise<{ ok: boolean; message: string }> {
+  const org = githubOrg();
+  const token = requiredEnv("GITHUB_TOKEN");
+  const res = await fetch(
+    `${GITHUB_API}/repos/${org}/${repo}/actions/workflows/${workflow.id}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({ ref: workflow.ref }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  return res.status === 204
+    ? { ok: true, message: "Herstartworkflow gestart vanaf een onveranderlijke release." }
+    : { ok: false, message: `GitHub weigerde de herstartworkflow (status ${res.status}).` };
 }
 
 /** First N error-looking lines from the failed job's log of a run. */

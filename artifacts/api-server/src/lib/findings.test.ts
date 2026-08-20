@@ -17,12 +17,21 @@ vi.mock("./notifications.js", () => ({
 }));
 vi.mock("./actionlog.js", () => ({
   logAction: vi.fn(async () => 1),
+  markActionsReported: vi.fn(async () => undefined),
 }));
 vi.mock("./logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("./expiry.js", () => ({
   listExpiryItems: vi.fn(async () => []),
+}));
+vi.mock("./selfheal.js", () => ({
+  restartRepoForHost: vi.fn(() => null),
+  maybeAutoRestartService: vi.fn(async () => ({
+    holdNotification: false,
+    escalationDetail: null,
+  })),
+  settleServiceRecovery: vi.fn(async () => false),
 }));
 
 import {
@@ -32,6 +41,7 @@ import {
   updateFindingLevel,
 } from "./findings.js";
 import { notifyDailyFindings, notifyFinding } from "./notifications.js";
+import { markActionsReported } from "./actionlog.js";
 
 const finding = {
   id: "service:site",
@@ -113,7 +123,7 @@ describe("17:00 workday report", () => {
     query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [waiting] })
-      .mockResolvedValueOnce({ rows: [{ action: "Controle herhaald", repo: "api", outcome: "geslaagd" }] })
+      .mockResolvedValueOnce({ rows: [{ id: 7, action: "Controle herhaald", repo: "api", outcome: "geslaagd" }] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     vi.mocked(notifyDailyFindings).mockResolvedValue(true);
@@ -124,10 +134,12 @@ describe("17:00 workday report", () => {
       [{ title: waiting.title, detail: waiting.detail }],
       [{ action: "Controle herhaald", repo: "api", outcome: "geslaagd" }],
     );
+    expect(markActionsReported).toHaveBeenCalledWith([7]);
   });
 
   it("does not send a report on a day without open findings", async () => {
     query
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
@@ -135,6 +147,29 @@ describe("17:00 workday report", () => {
     await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
 
     expect(notifyDailyFindings).not.toHaveBeenCalled();
+  });
+
+  it("sends a successful automatic action even when there are no open findings", async () => {
+    const action = {
+      id: 8,
+      action: "Dienst opnieuw gestart",
+      repo: "api",
+      outcome: "geslaagd — dienst is weer bereikbaar",
+    };
+    query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [action] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    vi.mocked(notifyDailyFindings).mockResolvedValue(true);
+
+    await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
+
+    expect(notifyDailyFindings).toHaveBeenCalledWith(
+      [],
+      [{ action: action.action, repo: action.repo, outcome: action.outcome }],
+    );
+    expect(markActionsReported).toHaveBeenCalledWith([8]);
   });
 
   it("never sends a report in the weekend", async () => {

@@ -8,9 +8,14 @@
 import { pool } from "@workspace/db";
 import { amsterdamParts, isQuietTime } from "./quiet.js";
 import { notifyFinding, notifyDailyFindings } from "./notifications.js";
-import { logAction } from "./actionlog.js";
+import { logAction, markActionsReported } from "./actionlog.js";
 import { logger } from "./logger.js";
 import { listExpiryItems, type ExpiryItem } from "./expiry.js";
+import {
+  maybeAutoRestartService,
+  restartRepoForHost,
+  settleServiceRecovery,
+} from "./selfheal.js";
 
 export type FindingLevel = "NU" | "KAN_WACHTEN";
 
@@ -209,7 +214,7 @@ function localDateKey(date: Date): string {
   }).format(date);
 }
 
-/** Sends at most one weekday 17:00 report, and only when waiting findings remain open. */
+/** Sends at most one weekday 17:00 report, including all server actions that day. */
 export async function deliverDailyReport(now = new Date()): Promise<void> {
   const { weekday, minutesOfDay } = amsterdamParts(now);
   if (weekday === "Sat" || weekday === "Sun" || minutesOfDay < 17 * 60) return;
@@ -226,7 +231,18 @@ export async function deliverDailyReport(now = new Date()): Promise<void> {
       WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'
       ORDER BY opened_at`,
   );
-  if (rows.rows.length === 0) {
+  const actions = await pool.query<{
+    id: number;
+    action: string;
+    repo: string | null;
+    outcome: string;
+  }>(
+    `SELECT id, action, repo, outcome FROM action_log
+      WHERE reported_at IS NULL
+        AND kind IN ('auto_retry', 'auto_restart', 'manual_rerun')
+      ORDER BY created_at`,
+  );
+  if (rows.rows.length === 0 && actions.rows.length === 0) {
     await pool.query(
       `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report', $1, now())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
@@ -234,17 +250,12 @@ export async function deliverDailyReport(now = new Date()): Promise<void> {
     );
     return;
   }
-  const actions = await pool.query<{ action: string; repo: string | null; outcome: string }>(
-    `SELECT action, repo, outcome FROM action_log
-      WHERE created_at >= now() - interval '24 hours'
-        AND kind IN ('auto_retry', 'manual_rerun')
-      ORDER BY created_at`,
-  );
   const delivered = await notifyDailyFindings(
     rows.rows.map((r) => ({ title: r.title, detail: r.detail })),
-    actions.rows,
+    actions.rows.map(({ action, repo, outcome }) => ({ action, repo, outcome })),
   );
   if (delivered) {
+    await markActionsReported(actions.rows.map((action) => action.id));
     await pool.query(
       `UPDATE findings SET daily_sent_on = $1, updated_at = now()
        WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'`,
@@ -282,6 +293,10 @@ export async function checkPublicServices(now = new Date()): Promise<void> {
       ok = false;
     }
     if (ok) {
+      const restartRepo = restartRepoForHost(host);
+      if (restartRepo) {
+        await settleServiceRecovery(host, restartRepo);
+      }
       await pool.query(
         `INSERT INTO monitor_state (key, value, updated_at) VALUES ($1, '0', now())
          ON CONFLICT (key) DO UPDATE SET value = '0', updated_at = now()`,
@@ -309,10 +324,26 @@ export async function checkPublicServices(now = new Date()): Promise<void> {
       [stateKey, JSON.stringify(state)],
     );
     if (state.count >= 3 && now.getTime() - state.firstAt >= 10 * 60 * 1000) {
+      const restartRepo = restartRepoForHost(host);
+      const decision = restartRepo
+        ? await maybeAutoRestartService({
+            host,
+            repo: restartRepo,
+            outageStartedAt: state.firstAt,
+            now,
+          })
+        : { holdNotification: false, escalationDetail: null };
+      if (decision.holdNotification) continue;
+      const detail = [
+        "Drie opeenvolgende HTTPS-metingen in ongeveer tien minuten zijn mislukt.",
+        decision.escalationDetail,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       await openFinding({
         id: `public-service:${entry}`, kind: "public_service_unavailable", subject: entry,
         title: `Publieke dienst ${host} is niet bereikbaar`,
-        detail: "Drie opeenvolgende HTTPS-metingen in ongeveer tien minuten zijn mislukt.",
+        detail,
       });
     }
   }
