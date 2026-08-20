@@ -8,11 +8,21 @@ import { and, desc, eq } from "drizzle-orm";
 import { logger } from "./logger.js";
 
 export interface LogActionInput {
-  kind: "auto_retry" | "manual_rerun" | "melding_onderdrukt" | "extern_lezen";
+  kind:
+    | "auto_retry"
+    | "manual_rerun"
+    | "melding_onderdrukt"
+    | "extern_lezen"
+    | "mail_mislukt";
+
   action: string;
+
   repo?: string | null;
+
   runId?: string | null;
+
   reason: string;
+
   outcome: string;
 }
 

@@ -19,6 +19,7 @@
 
 import type { RepoSummary, Anomaly } from "./github.js";
 import { sendPushToAll, type PushMessage } from "./push.js";
+import { sendMailSafe } from "./mail.js";
 import { logger } from "./logger.js";
 
 /**
@@ -31,6 +32,30 @@ async function pushSafe(message: PushMessage): Promise<boolean> {
     return await sendPushToAll(message);
   } catch (err) {
     logger.error({ err }, "Push: versturen mislukt");
+    return false;
+  }
+}
+
+/**
+ * Mail fanout that can never block Slack or push: sendMailSafe already
+ * queues failures in the outbox and never throws, but we guard anyway so a
+ * programming error in the mail path cannot suppress the other channels.
+ *
+ * Returns true when the mail channel HANDLED the notification: either it was
+ * sent right away ("sent") or it is safely persisted in the outbox
+ * ("queued"), which the monitor retries every cycle until delivery or the
+ * loud upper bound. Counting "queued" as handled is essential: the outbox
+ * owns the retry, so the caller advancing its notified-state prevents the
+ * same alert from being resent (and re-queued) on every poll — no duplicate
+ * mails. "off" (not configured) and "failed" (not even queueable) return
+ * false so the other channels / the next poll decide.
+ */
+async function mailSafe(subject: string, body: string): Promise<boolean> {
+  try {
+    const result = await sendMailSafe(subject, body);
+    return result === "sent" || result === "queued";
+  } catch (err) {
+    logger.error({ err }, "E-mail: versturen mislukt");
     return false;
   }
 }
@@ -154,19 +179,24 @@ export async function notifyMultipleReposRed(
     ],
   };
 
+  const mailBody = summaries
+    .map((s) => `${s.name}: ${s.failReason ?? "Controle faalt"}`)
+    .join("\n");
   const slackDelivered = webhookUrl ? await post(webhookUrl, payload) : false;
   const pushDelivered = await pushSafe({
     title: `🔴 ${count} codebases zijn rood geworden`,
-    body: summaries
-      .map((s) => `${s.name}: ${s.failReason ?? "Controle faalt"}`)
-      .join("\n"),
+    body: mailBody,
     url: "/",
     tag: "bundel-rood",
   });
-  const delivered = slackDelivered || pushDelivered;
+  const mailDelivered = await mailSafe(
+    `🔴 ${count} codebases zijn tegelijk rood geworden`,
+    mailBody,
+  );
+  const delivered = slackDelivered || pushDelivered || mailDelivered;
   if (delivered) {
     logger.info(
-      { repos: summaries.map((s) => s.name), slackDelivered, pushDelivered },
+      { repos: summaries.map((s) => s.name), slackDelivered, pushDelivered, mailDelivered },
       "Gebundelde rode-status melding verstuurd",
     );
   }
@@ -216,10 +246,16 @@ export async function notifyRepoRed(summary: RepoSummary): Promise<boolean> {
     url: `/repo/${encodeURIComponent(summary.name)}`,
     tag: `repo-${summary.name}`,
   });
-  const delivered = slackDelivered || pushDelivered;
+  const mailDelivered = await mailSafe(
+    `🔴 ${summary.name} is rood geworden`,
+    `${summary.name} is rood geworden.\n\nReden: ${reason}${
+      summary.lastCommitTitle ? `\nLaatste commit: ${summary.lastCommitTitle}` : ""
+    }\n\nBekijk: ${repoUrl}`,
+  );
+  const delivered = slackDelivered || pushDelivered || mailDelivered;
   if (delivered)
     logger.info(
-      { repo: summary.name, slackDelivered, pushDelivered },
+      { repo: summary.name, slackDelivered, pushDelivered, mailDelivered },
       "Rode-status melding verstuurd",
     );
   return delivered;
@@ -287,10 +323,16 @@ export async function notifyRepoRedReminder(
     url: `/repo/${encodeURIComponent(summary.name)}`,
     tag: `repo-${summary.name}`,
   });
-  const delivered = slackDelivered || pushDelivered;
+  const mailDelivered = await mailSafe(
+    `🔴 ${summary.name} is al ${duration} rood`,
+    `${summary.name} is nog steeds rood na ${duration}.\n\nReden: ${reason}${
+      summary.lastCommitTitle ? `\nLaatste commit: ${summary.lastCommitTitle}` : ""
+    }\n\nBekijk: ${repoUrl}`,
+  );
+  const delivered = slackDelivered || pushDelivered || mailDelivered;
   if (delivered) {
     logger.info(
-      { repo: summary.name, durationMs: redSinceMs, slackDelivered, pushDelivered },
+      { repo: summary.name, durationMs: redSinceMs, slackDelivered, pushDelivered, mailDelivered },
       "Herinnering rode-status verstuurd",
     );
   }
@@ -335,22 +377,27 @@ export async function notifyMultipleReposRedReminder(
     ],
   };
 
+  const mailBody = entries
+    .map(
+      ({ summary: s, redSinceMs }) =>
+        `${s.name}: ${s.failReason ?? "Controle faalt"} (al ${formatDuration(redSinceMs)})`,
+    )
+    .join("\n");
   const slackDelivered = webhookUrl ? await post(webhookUrl, payload) : false;
   const pushDelivered = await pushSafe({
     title: `🔴 ${count} codebases zijn al langere tijd rood`,
-    body: entries
-      .map(
-        ({ summary: s, redSinceMs }) =>
-          `${s.name}: ${s.failReason ?? "Controle faalt"} (al ${formatDuration(redSinceMs)})`,
-      )
-      .join("\n"),
+    body: mailBody,
     url: "/",
     tag: "bundel-herinnering",
   });
-  const delivered = slackDelivered || pushDelivered;
+  const mailDelivered = await mailSafe(
+    `🔴 ${count} codebases zijn al langere tijd rood`,
+    mailBody,
+  );
+  const delivered = slackDelivered || pushDelivered || mailDelivered;
   if (delivered) {
     logger.info(
-      { repos: entries.map((e) => e.summary.name), slackDelivered, pushDelivered },
+      { repos: entries.map((e) => e.summary.name), slackDelivered, pushDelivered, mailDelivered },
       "Gebundelde herinnering rode-status verstuurd",
     );
   }
@@ -402,10 +449,14 @@ export async function notifyAnomaly(
     url: `/repo/${encodeURIComponent(repoName)}`,
     tag: `afwijking-${repoName}`,
   });
-  const delivered = slackDelivered || pushDelivered;
+  const mailDelivered = await mailSafe(
+    `⚠️ Afwijking gedetecteerd in ${repoName}`,
+    `Ongewoon grote wijziging in ${repoName}.\n\nBestand: ${anomaly.fileName}\nRegels gewijzigd: ${anomaly.linesChanged}\nCommit: ${anomaly.commitTitle}\n\nBekijk commit: ${anomaly.commitUrl}`,
+  );
+  const delivered = slackDelivered || pushDelivered || mailDelivered;
   if (delivered)
     logger.info(
-      { repo: repoName, sha: anomaly.commitSha, slackDelivered, pushDelivered },
+      { repo: repoName, sha: anomaly.commitSha, slackDelivered, pushDelivered, mailDelivered },
       "Afwijkingsmelding verstuurd",
     );
   return delivered;

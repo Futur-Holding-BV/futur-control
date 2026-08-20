@@ -204,10 +204,17 @@ export const DeleteLeesSleutelResponse = zod.object({
 export const GetNotificationSettingsResponse = zod.object({
   "enabled": zod.boolean().describe('Whether Slack notifications are active'),
   "slackWebhookConfigured": zod.boolean().describe('True when a Slack webhook URL has been saved (URL itself is never returned)'),
+  "mailConfigured": zod.boolean().describe('True when the Microsoft Graph mail settings (GRAPH_\* secrets, MAIL_FROM, MAIL_TO) are all present'),
   "updatedAt": zod.coerce.date().nullish()
 })
 
-
+/**
+ * Sends a test e-mail from MAIL_FROM to all MAIL_TO addresses so the operator can verify the mail channel end-to-end.
+ * @summary Send a test e-mail via Microsoft Graph
+ */
+export const SendTestMailResponse = zod.object({
+  "ok": zod.boolean()
+})
 /**
  * Returns one row per monitored expiring item (GitHub tokens, TLS certificates, Azure client key, domain renewals). Items that cannot be read are returned with severity "unknown" and a reason — never as ok.
  * @summary List upcoming expirations
@@ -270,5 +277,4 @@ export const ExecuteProposalResponse = zod.object({
   "success": zod.boolean(),
   "message": zod.string().describe('Plain-language outcome message (Dutch)')
 })
-
 

@@ -139,6 +139,21 @@ export async function ensureTablesExist(): Promise<void> {
       )
     `);
 
+    // ── mail_outbox ─────────────────────────────────────────────────────────
+    // E-mails that could not be delivered via Microsoft Graph. Retried every
+    // monitor cycle; loudly logged in the action log after too many attempts.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS mail_outbox (
+        id              SERIAL PRIMARY KEY,
+        subject         TEXT NOT NULL,
+        body            TEXT NOT NULL,
+        last_error      TEXT NOT NULL,
+        attempts        INTEGER NOT NULL DEFAULT 1,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
     // ── login_attempts ──────────────────────────────────────────────────────
     // Persistent brute-force counter so login blocks survive server restarts.
     await client.query(`

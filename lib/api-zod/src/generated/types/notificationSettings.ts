@@ -11,6 +11,8 @@ export interface NotificationSettings {
   enabled: boolean;
   /** True when a Slack webhook URL has been saved (URL itself is never returned) */
   slackWebhookConfigured: boolean;
+  /** True when the Microsoft Graph mail settings (GRAPH_* secrets, MAIL_FROM, MAIL_TO) are all present */
+  mailConfigured: boolean;
   /** @nullable */
   updatedAt?: Date | null;
 }

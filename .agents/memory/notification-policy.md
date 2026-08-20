@@ -8,3 +8,10 @@ description: Debounce/quiet-window rules the monitor must keep honoring
 - `notified_status` semantics changed: `gray` in stored rows = already-notified problem; missing row defaults to `none`. Never reintroduce `gray` as the "never notified" default.
 - **Why:** operators demanded no night-time pings and no alerts for sub-10-min hiccups; gray counts as a problem, not rest.
 - **How to apply:** any monitor test that decides whether to notify MUST fake the system time (real clock makes tests fail at night/weekend mornings).
+
+## Mail channel (Microsoft Graph)
+Delivered-state OR-semantics: slack || push || mail. A mail that fails to send but is
+persisted in mail_outbox counts as HANDLED (delivered=true) — the outbox owns the retry
+each monitor cycle. Counting "queued" as not-delivered makes the monitor resend and
+re-queue the same alert every poll (duplicate mails, attempt counter resets after the
+max-attempt purge). Only "off" (unconfigured) and "failed" (not even queueable) return false.

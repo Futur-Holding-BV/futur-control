@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PushSettingsCard } from "@/components/push-settings-card";
 import { LeesSleutelsCard } from "@/components/lees-sleutels-card";
-
+import { MailSettingsCard } from "@/components/mail-settings-card";
 export default function NotificationsPage() {
   const { data: settings, isLoading } = useQuery({
     queryKey: getGetNotificationSettingsQueryKey(),
@@ -27,7 +27,7 @@ export default function NotificationsPage() {
       <div className="space-y-1">
         <h1 className="text-xl md:text-2xl font-semibold tracking-tight">Meldingen</h1>
         <p className="text-sm text-muted-foreground">
-          Ontvang een Slack-bericht of pushmelding op je telefoon zodra een codebase rood wordt of een grote afwijking wordt gedetecteerd.
+          Ontvang een e-mail, Slack-bericht of pushmelding zodra een codebase rood wordt of een grote afwijking wordt gedetecteerd.
         </p>
       </div>
 
@@ -122,6 +122,9 @@ export default function NotificationsPage() {
               </div>
             )}
           </div>
+
+          {/* E-mail via Microsoft Graph */}
+          <MailSettingsCard mailConfigured={Boolean(settings?.mailConfigured)} />
 
           {/* Push notifications on this device */}
           <PushSettingsCard />

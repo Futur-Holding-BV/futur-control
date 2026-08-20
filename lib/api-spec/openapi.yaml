@@ -292,6 +292,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotificationSettings"
+  /notifications/test-mail:
+    post:
+      operationId: sendTestMail
+      tags: [notifications]
+      summary: Send a test e-mail via Microsoft Graph
+      description: Sends a test e-mail from MAIL_FROM to all MAIL_TO addresses so the operator can verify the mail channel end-to-end.
+      responses:
+        "200":
+          description: Test e-mail accepted by Microsoft Graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushOk"
+        "409":
+          description: Mail is not configured (missing GRAPH_* or MAIL_* settings)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+        "502":
+          description: Microsoft Graph refused the token request or the message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
   /expiry:
     get:
       operationId: listExpiryItems
@@ -673,7 +698,7 @@ components:
           description: True when the latest check succeeded only after an automatic retry ("hersteld na herhaling")
     NotificationSettings:
       type: object
-      required: [enabled, slackWebhookConfigured]
+      required: [enabled, slackWebhookConfigured, mailConfigured]
       properties:
         enabled:
           type: boolean
@@ -681,6 +706,9 @@ components:
         slackWebhookConfigured:
           type: boolean
           description: True when a Slack webhook URL has been saved (URL itself is never returned)
+        mailConfigured:
+          type: boolean
+          description: True when the Microsoft Graph mail settings (GRAPH_* secrets, MAIL_FROM, MAIL_TO) are all present
         updatedAt:
           type: ["string", "null"]
           format: date-time

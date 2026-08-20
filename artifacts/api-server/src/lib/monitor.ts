@@ -37,6 +37,7 @@ import {
   notifyAnomaly,
 } from "./notifications.js";
 import { maybeAutoRetry, settleRecovery } from "./selfheal.js";
+import { retryMailOutbox } from "./mail.js";
 import { logAction } from "./actionlog.js";
 import { isQuietTime, MIN_PROBLEM_AGE_MS } from "./quiet.js";
 import { logger } from "./logger.js";
@@ -450,6 +451,14 @@ export async function pollAll(): Promise<void> {
     lockClient = client;
 
     logger.debug("Monitor: start controle van alle repositories");
+
+    // 0. Retry queued e-mails from earlier failed sends (mail outbox).
+    //    Failures inside the retry can never break the poll cycle.
+    try {
+      await retryMailOutbox();
+    } catch (err) {
+      logger.error({ err }, "E-mailwachtrij verwerken mislukt");
+    }
 
     // 1. Gather data for all repos (no Slack calls yet).
     const monitoredRepos = await listMonitoredRepos();

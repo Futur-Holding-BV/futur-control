@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { notifyRepoRed, notifyAnomaly } from "./notifications.js";
+
+// The mail channel is exercised in its own test files (mail.test.ts,
+// notifications.mail.test.ts). Here we disable it so the Slack fetch-spy
+// assertions stay exact.
+vi.mock("./mail.js", () => ({
+  sendMailSafe: vi.fn(async () => "off" as const),
+}));
 import type { RepoSummary, Anomaly } from "./github.js";
 
 // ---------------------------------------------------------------------------
