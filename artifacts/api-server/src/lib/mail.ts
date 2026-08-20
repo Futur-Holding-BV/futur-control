@@ -17,7 +17,7 @@
  *     a mail is never silently dropped.
  */
 
-import { db, mailOutbox } from "@workspace/db";
+import { db, mailOutbox, pool } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { logAction } from "./actionlog.js";
 import { logger } from "./logger.js";
@@ -29,6 +29,9 @@ const TOKEN_EXPIRY_MARGIN_MS = 60_000;
 
 /** After this many attempts the outbox entry is loudly logged and removed. */
 export const MAX_OUTBOX_ATTEMPTS = 20;
+const DAILY_REPORT_SUBJECT = /^📋 Dagbericht (\d{4}-\d{2}-\d{2}): bewaking draait$/;
+const DAILY_REPORT_ACCEPTED = /^daily-report-accepted:(\d{4}-\d{2}-\d{2})$/;
+const mailRowsAwaitingDailyConfirmation = new Set<number>();
 
 interface MailConfig {
   tenantId: string;
@@ -89,6 +92,7 @@ let cachedToken: { token: string; expiresAtMs: number } | null = null;
 export function resetMailStateForTests(): void {
   cachedToken = null;
   missingConfigLogged = false;
+  mailRowsAwaitingDailyConfirmation.clear();
 }
 
 async function getAccessToken(config: MailConfig): Promise<string> {
@@ -277,8 +281,52 @@ export async function retryMailOutbox(): Promise<void> {
 
   for (const row of rows) {
     try {
-      await sendMailDirect(row.subject, row.body);
+      const acceptedDailyReportDay = DAILY_REPORT_ACCEPTED.exec(row.lastError)?.[1];
+      const dailyReportDay = acceptedDailyReportDay
+        ?? DAILY_REPORT_SUBJECT.exec(row.subject)?.[1];
+      const graphAlreadyAccepted = Boolean(
+        acceptedDailyReportDay || mailRowsAwaitingDailyConfirmation.has(row.id),
+      );
+      if (!graphAlreadyAccepted) {
+        await sendMailDirect(row.subject, row.body);
+      }
+      if (dailyReportDay) {
+        if (!graphAlreadyAccepted) {
+          mailRowsAwaitingDailyConfirmation.add(row.id);
+          await db
+            .update(mailOutbox)
+            .set({
+              lastError: `daily-report-accepted:${dailyReportDay}`,
+              lastAttemptAt: new Date(),
+            })
+            .where(eq(mailOutbox.id, row.id))
+            .catch((err) => {
+              logger.error(
+                { err, day: dailyReportDay },
+                "Bezorgd dagbericht kon niet als bevestiging in de wachtrij worden gemarkeerd",
+              );
+            });
+        }
+        try {
+          await pool.query(
+            `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report', $1, now())
+             ON CONFLICT (key) DO UPDATE SET
+               value = GREATEST(monitor_state.value, EXCLUDED.value),
+               updated_at = now()`,
+            [dailyReportDay],
+          );
+        } catch (err) {
+          logger.error(
+            { err, day: dailyReportDay },
+            "Bezorgd dagbericht kon niet als bevestigd worden vastgelegd",
+          );
+          // Keep the row. Its accepted marker makes the next poll retry only
+          // this state write, never the already-successful Graph send.
+          continue;
+        }
+      }
       await db.delete(mailOutbox).where(eq(mailOutbox.id, row.id));
+      mailRowsAwaitingDailyConfirmation.delete(row.id);
       logger.info(
         { subject: row.subject, attempts: row.attempts + 1 },
         "E-mail uit wachtrij alsnog bezorgd",

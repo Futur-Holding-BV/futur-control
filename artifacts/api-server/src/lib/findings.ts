@@ -214,7 +214,10 @@ function localDateKey(date: Date): string {
   }).format(date);
 }
 
-/** Sends at most one weekday 17:00 report, including all server actions that day. */
+/**
+ * Sends at most one weekday 17:00 report, including all server actions that day.
+ * A successful delivery is the proof that monitoring is still reaching operators.
+ */
 export async function deliverDailyReport(now = new Date()): Promise<void> {
   const { weekday, minutesOfDay } = amsterdamParts(now);
   if (weekday === "Sat" || weekday === "Sun" || minutesOfDay < 17 * 60) return;
@@ -223,6 +226,19 @@ export async function deliverDailyReport(now = new Date()): Promise<void> {
     "SELECT value FROM monitor_state WHERE key = 'daily-report'",
   );
   if (previous.rows[0]?.value === day) return;
+  const pending = await pool.query<{ value: string }>(
+    "SELECT value FROM monitor_state WHERE key = 'daily-report-pending'",
+  );
+  if (pending.rows[0]?.value === day) return;
+
+  // Keep the first due date even when every delivery channel fails. The
+  // independent watchdog uses it to expose an initial series of missed
+  // reports, before there is a first successful daily-report marker.
+  await pool.query(
+    `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report-first-due', $1, now())
+     ON CONFLICT (key) DO NOTHING`,
+    [day],
+  );
 
   const rows = await pool.query<FindingRow>(
     `SELECT id, kind, subject, title, detail, level, opened_at, resolved_at,
@@ -242,27 +258,30 @@ export async function deliverDailyReport(now = new Date()): Promise<void> {
         AND kind IN ('auto_retry', 'auto_restart', 'manual_rerun')
       ORDER BY created_at`,
   );
-  if (rows.rows.length === 0 && actions.rows.length === 0) {
-    await pool.query(
-      `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report', $1, now())
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-      [day],
-    );
-    return;
-  }
-  const delivered = await notifyDailyFindings(
+  const delivery = await notifyDailyFindings(
     rows.rows.map((r) => ({ title: r.title, detail: r.detail })),
     actions.rows.map(({ action, repo, outcome }) => ({ action, repo, outcome })),
+    day,
   );
-  if (delivered) {
+  if (delivery.handled) {
     await markActionsReported(actions.rows.map((action) => action.id));
     await pool.query(
       `UPDATE findings SET daily_sent_on = $1, updated_at = now()
        WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'`,
       [day],
     );
+  }
+  if (delivery.confirmed) {
     await pool.query(
       `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [day],
+    );
+  } else if (delivery.handled) {
+    // A mail in the durable outbox is handled (so it must not be queued
+    // again), but it is not proof of delivery until Graph accepts its retry.
+    await pool.query(
+      `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report-pending', $1, now())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
       [day],
     );

@@ -14,11 +14,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const inserted: Array<Record<string, unknown>> = [];
 const updates: Array<Record<string, unknown>> = [];
+const stateQueries: Array<{ text: string; values?: unknown[] }> = [];
 let deletes = 0;
 let insertFails = false;
+let stateQueryFails = false;
 let selectRows: Array<Record<string, unknown>> = [];
 
 vi.mock("@workspace/db", () => ({
+  pool: {
+    query: async (text: string, values?: unknown[]) => {
+      stateQueries.push({ text, values });
+      if (stateQueryFails) throw new Error("state write failed");
+      return { rows: [], rowCount: 1 };
+    },
+  },
   db: {
     select: () => ({
       from: () => ({
@@ -113,8 +122,10 @@ beforeEach(() => {
   resetMailStateForTests();
   inserted.length = 0;
   updates.length = 0;
+  stateQueries.length = 0;
   deletes = 0;
   insertFails = false;
+  stateQueryFails = false;
   selectRows = [];
   setMailEnv();
 });
@@ -287,6 +298,63 @@ describe("outbox", () => {
 
     expect(deletes).toBe(1);
     expect(vi.mocked(logAction)).not.toHaveBeenCalled();
+  });
+
+  it("marks a queued daily report as confirmed when Graph accepts the retry", async () => {
+    selectRows = [{
+      id: 1,
+      subject: "📋 Dagbericht 2026-08-18: bewaking draait",
+      body: "De bewaking draait.",
+      attempts: 2,
+    }];
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(acceptedResponse());
+
+    await retryMailOutbox();
+
+    expect(stateQueries).toHaveLength(1);
+    expect(stateQueries[0]?.text).toContain("daily-report");
+    expect(stateQueries[0]?.values).toEqual(["2026-08-18"]);
+    expect(deletes).toBe(1);
+  });
+
+  it("retries only confirmation state when Graph accepted but its state write failed", async () => {
+    const subject = "📋 Dagbericht 2026-08-18: bewaking draait";
+    selectRows = [{
+      id: 1,
+      subject,
+      body: "De bewaking draait.",
+      lastError: "graph down",
+      attempts: 2,
+    }];
+    stateQueryFails = true;
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(acceptedResponse());
+
+    await retryMailOutbox();
+
+    expect(deletes).toBe(0);
+    expect(updates.at(-1)).toMatchObject({
+      lastError: "daily-report-accepted:2026-08-18",
+    });
+    expect(fetchSpy.mock.calls.filter(([url]) =>
+      String(url).includes("graph.microsoft.com"))).toHaveLength(1);
+
+    stateQueryFails = false;
+    selectRows = [{
+      id: 1,
+      subject,
+      body: "De bewaking draait.",
+      lastError: "daily-report-accepted:2026-08-18",
+      attempts: 2,
+    }];
+    await retryMailOutbox();
+
+    expect(deletes).toBe(1);
+    expect(fetchSpy.mock.calls.filter(([url]) =>
+      String(url).includes("graph.microsoft.com"))).toHaveLength(1);
   });
 
   it("bumps the attempt counter when the retry fails again", async () => {

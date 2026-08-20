@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { notifyRepoRed, notifyAnomaly } from "./notifications.js";
+import { notifyDailyFindings, notifyRepoRed, notifyAnomaly } from "./notifications.js";
 
 // The mail channel is exercised in its own test files (mail.test.ts,
 // notifications.mail.test.ts). Here we disable it so the Slack fetch-spy
@@ -133,6 +133,33 @@ describe("notifyRepoRed", () => {
     const result = await notifyRepoRed(redSummary);
 
     expect(result).toBe(false);
+  });
+});
+
+describe("daily report wording", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.SLACK_WEBHOOK_URL = VALID_WEBHOOK;
+    delete process.env.NOTIFICATIONS_ENABLED;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.env = { ...originalEnv };
+  });
+
+  it("confirms that monitoring is running when no findings are open", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(okResponse());
+
+    const delivery = await notifyDailyFindings([], [], "2026-08-18");
+
+    const [, init] = fetchSpy.mock.calls[0]!;
+    const payload = JSON.parse((init as RequestInit).body as string) as { text: string };
+    expect(payload.text).toContain("Dagbericht 2026-08-18: bewaking draait");
+    expect(payload.text).toContain("De bewaking draait");
+    expect(payload.text).toContain("geen open aandachtspunten");
+    expect(delivery).toEqual({ handled: true, confirmed: true });
   });
 });
 

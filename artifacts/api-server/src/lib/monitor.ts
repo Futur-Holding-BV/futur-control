@@ -41,6 +41,7 @@ import {
   runFindingDelivery,
   syncExpiryFindings,
 } from "./findings.js";
+import { MONITOR_POLL_LOCK_KEY } from "./monitorLock.js";
 import { recordSuccessfulMonitorRound } from "./watchdog.js";
 
 /**
@@ -53,7 +54,6 @@ function isProblem(status: string): boolean {
 }
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const ADVISORY_LOCK_KEY = "6839201475"; // stable across restarts; fits pg bigint
 
 /**
  * How long a repo must remain continuously red before a reminder notification
@@ -84,7 +84,7 @@ async function tryAcquireAdvisoryLock(): Promise<{
   try {
     const res = await client.query(
       "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
-      [ADVISORY_LOCK_KEY],
+      [MONITOR_POLL_LOCK_KEY],
     );
     const acquired = Boolean(res.rows[0]?.["acquired"]);
     if (!acquired) {
@@ -101,7 +101,7 @@ async function tryAcquireAdvisoryLock(): Promise<{
 async function releaseAdvisoryLock(client: PgPoolClient): Promise<void> {
   try {
     await client.query("SELECT pg_advisory_unlock($1::bigint)", [
-      ADVISORY_LOCK_KEY,
+      MONITOR_POLL_LOCK_KEY,
     ]);
   } finally {
     client.release();

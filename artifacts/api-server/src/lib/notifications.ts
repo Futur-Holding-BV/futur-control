@@ -19,7 +19,7 @@
 
 import type { RepoSummary, Anomaly } from "./github.js";
 import { sendPushToAll, type PushMessage } from "./push.js";
-import { sendMailSafe } from "./mail.js";
+import { sendMailSafe, type MailSendResult } from "./mail.js";
 import { logger } from "./logger.js";
 
 /**
@@ -50,14 +50,18 @@ async function pushSafe(message: PushMessage): Promise<boolean> {
  * mails. "off" (not configured) and "failed" (not even queueable) return
  * false so the other channels / the next poll decide.
  */
-async function mailSafe(subject: string, body: string): Promise<boolean> {
+async function mailSafeResult(subject: string, body: string): Promise<MailSendResult> {
   try {
-    const result = await sendMailSafe(subject, body);
-    return result === "sent" || result === "queued";
+    return await sendMailSafe(subject, body);
   } catch (err) {
     logger.error({ err }, "E-mail: versturen mislukt");
-    return false;
+    return "failed";
   }
+}
+
+async function mailSafe(subject: string, body: string): Promise<boolean> {
+  const result = await mailSafeResult(subject, body);
+  return result === "sent" || result === "queued";
 }
 
 /** Generic policy-driven fanout. Monitor code decides timing, this only delivers. */
@@ -77,20 +81,47 @@ export async function notifyFinding(
   return slackDelivered || pushDelivered || mailDelivered;
 }
 
+export interface DailyReportDelivery {
+  /** At least one channel accepted the report or the mail outbox owns it. */
+  handled: boolean;
+  /** At least one channel accepted it immediately; queued mail is not confirmed yet. */
+  confirmed: boolean;
+}
+
 export async function notifyDailyFindings(
   findings: Array<{ title: string; detail: string }>,
   actions: Array<{ action: string; repo: string | null; outcome: string }> = [],
-): Promise<boolean> {
+  day: string,
+): Promise<DailyReportDelivery> {
+  if (!isEnabled()) return { handled: false, confirmed: false };
   const findingBody = findings.length > 0
     ? findings.map((finding) => `• ${finding.title}\n  ${finding.detail}`).join("\n\n")
-    : "Geen open aandachtspunten.";
+    : "De bewaking draait. Er staan vandaag geen open aandachtspunten.";
   const actionBody = actions.length > 0
     ? `\n\nWat het systeem op mijn servers heeft gedaan:\n${actions
         .map((action) => `• ${action.action}${action.repo ? ` (${action.repo})` : ""}: ${action.outcome}`)
         .join("\n")}`
     : "";
   const body = `${findingBody}${actionBody}`;
-  return notifyFinding("Dagbericht: open aandachtspunten", body, "KAN_WACHTEN");
+  const title = `Dagbericht ${day}: bewaking draait`;
+  const subject = `📋 ${title}`;
+  const webhookUrl = resolveWebhookUrl();
+  const slackDelivered = webhookUrl
+    ? await post(webhookUrl, { text: `${subject}\n${body}` })
+    : false;
+  const pushDelivered = await pushSafe({
+    title: subject,
+    body,
+    url: "/",
+    tag: `daily-report-${day}`,
+  });
+  const mailResult = await mailSafeResult(subject, body);
+  const mailHandled = mailResult === "sent" || mailResult === "queued";
+  const mailConfirmed = mailResult === "sent";
+  return {
+    handled: slackDelivered || pushDelivered || mailHandled,
+    confirmed: slackDelivered || pushDelivered || mailConfirmed,
+  };
 }
 
 // ---------------------------------------------------------------------------

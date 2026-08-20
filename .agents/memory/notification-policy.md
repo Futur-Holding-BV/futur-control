@@ -18,3 +18,16 @@ persisted in mail_outbox counts as HANDLED (delivered=true) — the outbox owns 
 each monitor cycle. Counting "queued" as not-delivered makes the monitor resend and
 re-queue the same alert every poll (duplicate mails, attempt counter resets after the
 max-attempt purge). Only "off" (unconfigured) and "failed" (not even queueable) return false.
+
+The weekday daily report is the exception to treating HANDLED as delivery proof:
+queued-only mail is HANDLED for anti-duplicate ownership but remains unconfirmed until
+Graph accepts an outbox retry. Keep separate pending/confirmed state and advance the
+confirmed date monotonically when delayed reports arrive.
+
+**Why:** an outbox row proves durable retry ownership, not operator delivery. Counting
+it as the daily heartbeat would hide a broken mail path; retrying the whole report would
+instead duplicate mail.
+
+**How to apply:** daily-report overdue checks use Amsterdam workdays and probe the live
+monitor advisory lock before counting today. Never use a persisted "poll active" flag:
+it can survive a process crash after PostgreSQL has already released the real lock.

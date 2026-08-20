@@ -226,16 +226,16 @@ export async function ensureTablesExist(): Promise<void> {
       )
     `);
     await client.query(`
-      INSERT INTO finding_levels (kind, level) VALUES
-        ('public_service_unavailable', 'NU'),
-        ('certificate_invalid', 'NU'),
-        ('monitor_unhealthy', 'NU'),
-        ('credential_expired', 'NU'),
-        ('database_unavailable', 'NU'),
-        ('build_failed', 'KAN_WACHTEN'),
-        ('anomaly', 'KAN_WACHTEN'),
-        ('domain_expiry', 'KAN_WACHTEN'),
-        ('repo_without_check', 'KAN_WACHTEN')
+      INSERT INTO finding_levels (kind, level, updated_at) VALUES
+        ('public_service_unavailable', 'NU', now()),
+        ('certificate_invalid', 'NU', now()),
+        ('monitor_unhealthy', 'NU', now()),
+        ('credential_expired', 'NU', now()),
+        ('database_unavailable', 'NU', now()),
+        ('build_failed', 'KAN_WACHTEN', now()),
+        ('anomaly', 'KAN_WACHTEN', now()),
+        ('domain_expiry', 'KAN_WACHTEN', now()),
+        ('repo_without_check', 'KAN_WACHTEN', now())
       ON CONFLICT (kind) DO NOTHING
     `);
   } finally {

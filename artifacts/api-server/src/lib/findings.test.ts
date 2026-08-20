@@ -122,31 +122,33 @@ describe("17:00 workday report", () => {
 
     query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [waiting] })
       .mockResolvedValueOnce({ rows: [{ id: 7, action: "Controle herhaald", repo: "api", outcome: "geslaagd" }] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-    vi.mocked(notifyDailyFindings).mockResolvedValue(true);
+    vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
 
     await deliverDailyReport(new Date("2026-08-17T15:00:00Z"));
 
     expect(notifyDailyFindings).toHaveBeenCalledWith(
       [{ title: waiting.title, detail: waiting.detail }],
       [{ action: "Controle herhaald", repo: "api", outcome: "geslaagd" }],
+      "2026-08-17",
     );
     expect(markActionsReported).toHaveBeenCalledWith([7]);
   });
 
-  it("does not send a report on a day without open findings", async () => {
-    query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+  it("sends a proof-of-monitoring report on a clean workday", async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 1 });
+    vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
 
     await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
 
-    expect(notifyDailyFindings).not.toHaveBeenCalled();
+    expect(notifyDailyFindings).toHaveBeenCalledWith([], [], "2026-08-18");
+    expect(query.mock.calls.map((call) => String(call[0])).join("\n"))
+      .toContain("daily-report-first-due");
   });
 
   it("sends a successful automatic action even when there are no open findings", async () => {
@@ -159,23 +161,47 @@ describe("17:00 workday report", () => {
     query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [action] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-    vi.mocked(notifyDailyFindings).mockResolvedValue(true);
+    vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
 
     await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
 
     expect(notifyDailyFindings).toHaveBeenCalledWith(
       [],
       [{ action: action.action, repo: action.repo, outcome: action.outcome }],
+      "2026-08-18",
     );
     expect(markActionsReported).toHaveBeenCalledWith([8]);
+  });
+
+  it("does not treat a mail that is only queued as confirmed delivery", async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 1 });
+    vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: false });
+
+    await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
+
+    const sql = query.mock.calls.map((call) => String(call[0]));
+    expect(sql.some((statement) => statement.includes("VALUES ('daily-report-pending'"))).toBe(true);
+    expect(sql.some((statement) => statement.includes("VALUES ('daily-report',"))).toBe(false);
   });
 
   it("never sends a report in the weekend", async () => {
     await deliverDailyReport(new Date("2026-08-22T15:00:00Z"));
     expect(query).not.toHaveBeenCalled();
     expect(notifyDailyFindings).not.toHaveBeenCalled();
+  });
+
+  it("uses 17:00 Amsterdam during winter time too", async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 1 });
+    vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
+
+    // 17:00 CET on a Monday; the same instant is only 16:00 UTC.
+    await deliverDailyReport(new Date("2026-01-19T16:00:00Z"));
+
+    expect(notifyDailyFindings).toHaveBeenCalledWith([], [], "2026-01-19");
   });
 });
 
