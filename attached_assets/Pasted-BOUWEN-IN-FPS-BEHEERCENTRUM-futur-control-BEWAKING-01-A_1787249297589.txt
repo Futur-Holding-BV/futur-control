@@ -1,0 +1,33 @@
+BOUWEN IN: FPS-BEHEERCENTRUM (futur-control)
+
+BEWAKING_01
+
+Aanleiding, gemeten 20-08-2026: het beheercentrum draait, maar niemand merkt er iets van. Meldingen gaan uitsluitend naar Slack en dat gebruik ik niet — het systeem is dus feitelijk stil. Vandaag gebeurde er van alles dat het had moeten melden: tien mislukte uitrollen op één ochtend, een bouwcontrole die de hele dag rood stond, negen dagen geen uitgaande mail, twaalf dagen geen externe back-upset. Ik heb dat allemaal zelf ontdekt door toevallig te kijken.
+
+1. MAIL IN PLAATS VAN SLACK. Verstuur meldingen per mail naar control@futurholding.com via Microsoft Graph. De app-registratie in de Futur-tenant bestaat al (toepassings-id 086e4eea-2b8e-4929-b7e8-a732d279c8d3, tenant e13e3488-90bf-44ba-b90c-710a4981a1aa). Slack mag blijven bestaan als tweede kanaal, maar mail is leidend. Werkt de mail niet, dan is dat zelf een storing die zichtbaar moet worden.
+
+2. WANNEER WEL EN NIET MELDEN.
+   - Nooit 's nachts. Doordeweeks vanaf 07:15, in het weekend vanaf 09:00.
+   - Overdag alleen berichten over storingen die NU opgelost moeten worden.
+   - Alles wat kan wachten komt gebundeld in één dagbericht om 17:00.
+   - Domeinverval hoort nooit bij de directe meldingen, ook niet vlak voor de datum — dat gaat altijd in het dagbericht.
+   - Storingen die vanzelf of door het systeem zelf zijn opgelost, meld je helemaal niet. Ook niet in het dagbericht. Wat het systeem zelf heeft aangeraakt komt wel in het dagbericht, als regel over wat er op mijn servers is gebeurd — niet als storing.
+
+3. WAT ER BEWAAKT MOET WORDEN, naast wat er al is. Nu kijkt het alleen naar GitHub. Voeg toe:
+   - Draait de productieomgeving van Connect: reageert hij, en op welke versie.
+   - Loopt productie achter op wat er op main staat: vergelijk de laatste commit met wat de server meldt. Loopt hij achter, dan is dat een storing.
+   - Staat de bouwcontrole langer dan 24 uur rood: dagelijkse melding tot hij groen is. Vandaag was dat de blokkade waardoor niets meer uitrolde.
+   - Is er de afgelopen 24 uur een geslaagde databaseback-up gemaakt, en is er de afgelopen 36 uur een externe set opgehaald door de NAS.
+   - Verstuurt Connect nog mail: sinds 11 augustus lag dat negen dagen stil zonder dat iemand het merkte.
+   - Verlopen sleutels en geheimen: het clientgeheim van de mailkoppeling, de Sentry-sleutel, tokens. Waarschuw dertig dagen van tevoren, in het dagbericht.
+
+4. NIEUWE PROJECTEN. Naast FPS Connect en Koersa horen FPS Finance en FPS Archief er nu ook bij, plus dit beheercentrum zelf. Controleer of ze automatisch worden opgepikt via de organisatie Futur-Holding-BV en of dat ook geldt voor repositories die later bijkomen.
+
+5. WAT HET ZELF MAG OPLOSSEN, zonder te vragen — alles wat terug te draaien is: een gehaperde bouwcontrole opnieuw draaien, een dienst of container herstarten, een mislukte uitrol opnieuw met dezelfde versie. Maximaal drie pogingen, daarna alsnog melden.
+   Nooit automatisch: databasewijzigingen, een back-up terugzetten, terugrollen naar een oudere versie, en wijzigingen aan instellingen, geheimen, rechten of firewall.
+
+6. HET DAGBERICHT van 17:00 bevat: wat er vandaag is opgelost zonder mij, wat er nog openstaat, wat er verloopt in de komende dertig dagen, en de stand van de vijf bewaakte punten uit punt 3. Eén bericht, kort, in gewone taal.
+
+7. STILTE IS ZELF EEN STORING. Komt er twee dagen achter elkaar geen dagbericht, dan hoort dat op te vallen. Zorg dat het uitblijven van berichten zichtbaar wordt — bijvoorbeeld doordat het dagbericht altijd komt, ook als er niets te melden is.
+
+Dit project staat sinds 17 augustus stil. Begin met punt 1 en 2; zonder die twee blijft de rest zinloos.
