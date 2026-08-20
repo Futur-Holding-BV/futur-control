@@ -210,9 +210,14 @@ export async function ensureTablesExist(): Promise<void> {
         resolved_at TIMESTAMPTZ,
         auto_resolved BOOLEAN NOT NULL DEFAULT false,
         immediate_sent_at TIMESTAMPTZ,
+        immediate_claim_token TEXT,
         daily_sent_on TEXT,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
+    `);
+    await client.query(`
+      ALTER TABLE findings
+        ADD COLUMN IF NOT EXISTS immediate_claim_token TEXT
     `);
     await client.query(`
       CREATE INDEX IF NOT EXISTS findings_open_level_idx

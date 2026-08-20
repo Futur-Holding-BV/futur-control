@@ -19,6 +19,17 @@ each monitor cycle. Counting "queued" as not-delivered makes the monitor resend 
 re-queue the same alert every poll (duplicate mails, attempt counter resets after the
 max-attempt purge). Only "off" (unconfigured) and "failed" (not even queueable) return false.
 
+## Runtime boundary
+Only the published production service may start monitor, watchdog, or delivery timers.
+
+**Why:** Main previews and isolated task-agent environments can run simultaneously with
+the same mail secrets but separate databases; database locks cannot deduplicate across
+those environments, so every environment would send its own copy.
+
+**How to apply:** Keep all operational background jobs behind the production runtime
+gate. Preview and test environments may serve APIs and run explicit tests, but must not
+send scheduled or monitor-triggered notifications.
+
 The weekday daily report is the exception to treating HANDLED as delivery proof:
 queued-only mail is HANDLED for anti-duplicate ownership but remains unconfirmed until
 Graph accepts an outbox retry. Keep separate pending/confirmed state and advance the

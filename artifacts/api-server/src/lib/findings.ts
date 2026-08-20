@@ -6,11 +6,16 @@
  * recovery from creating unnecessary mail.
  */
 import { pool } from "@workspace/db";
+import { randomUUID } from "node:crypto";
 import { amsterdamParts, isQuietTime } from "./quiet.js";
 import { notifyFinding, notifyDailyFindings } from "./notifications.js";
 import { logAction, markActionsReported } from "./actionlog.js";
 import { logger } from "./logger.js";
-import { listExpiryItems, type ExpiryItem } from "./expiry.js";
+import {
+  listExpiryItems,
+  listTlsExpiryItems,
+  type ExpiryItem,
+} from "./expiry.js";
 import {
   maybeAutoRestartService,
   restartRepoForHost,
@@ -65,6 +70,7 @@ const FALLBACK_LEVELS: Record<string, FindingLevel> = {
 };
 
 const IMMEDIATE_DELIVERY_LOCK = "6839201476";
+const DAILY_REPORT_CHECK_INTERVAL_MS = 30_000;
 
 interface FindingDbClient {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(
@@ -94,6 +100,7 @@ export async function openFinding(input: FindingInput): Promise<void> {
        opened_at = CASE WHEN findings.resolved_at IS NULL THEN findings.opened_at ELSE now() END,
        resolved_at = NULL, auto_resolved = false,
        immediate_sent_at = CASE WHEN findings.resolved_at IS NULL THEN findings.immediate_sent_at ELSE NULL END,
+        immediate_claim_token = CASE WHEN findings.resolved_at IS NULL THEN findings.immediate_claim_token ELSE NULL END,
        daily_sent_on = CASE WHEN findings.resolved_at IS NULL THEN findings.daily_sent_on ELSE NULL END,
        updated_at = now()`,
     [input.id, input.kind, input.subject, input.title, input.detail, level],
@@ -190,11 +197,42 @@ export async function deliverImmediateFindings(now = new Date()): Promise<void> 
         ORDER BY opened_at`,
     );
     for (const finding of rows.rows) {
-      const delivered = await notifyFinding(finding.title, finding.detail, "NU");
+      // Claim before crossing the network boundary. Two processes — or a
+      // process restart immediately after Graph accepted a message — must
+      // never emit the same finding twice.
+      const claimToken = randomUUID();
+      const claim = await client.query<{ id: string }>(
+        `UPDATE findings
+            SET immediate_claim_token = $2, updated_at = now()
+          WHERE id = $1 AND immediate_sent_at IS NULL
+            AND immediate_claim_token IS NULL
+        RETURNING id`,
+        [finding.id, claimToken],
+      );
+      if (!claim.rows[0]) continue;
+
+      let delivered = false;
+      try {
+        delivered = await notifyFinding(finding.title, finding.detail, "NU");
+      } catch (err) {
+        logger.error({ err, findingId: finding.id }, "Directe bevinding versturen mislukt");
+      }
       if (delivered) {
         await client.query(
-          "UPDATE findings SET immediate_sent_at = now(), updated_at = now() WHERE id = $1",
-          [finding.id],
+          `UPDATE findings
+              SET immediate_sent_at = now(), immediate_claim_token = NULL,
+                  updated_at = now()
+            WHERE id = $1 AND immediate_claim_token = $2`,
+          [finding.id, claimToken],
+        );
+      } else {
+        // No channel accepted or durably queued the message. Release only our
+        // own claim so a later round may retry it.
+        await client.query(
+          `UPDATE findings
+              SET immediate_claim_token = NULL, updated_at = now()
+            WHERE id = $1 AND immediate_claim_token = $2`,
+          [finding.id, claimToken],
         );
       }
     }
@@ -240,51 +278,87 @@ export async function deliverDailyReport(now = new Date()): Promise<void> {
     [day],
   );
 
-  const rows = await pool.query<FindingRow>(
-    `SELECT id, kind, subject, title, detail, level, opened_at, resolved_at,
-            auto_resolved, immediate_sent_at
-       FROM findings
-      WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'
-      ORDER BY opened_at`,
+  // One atomic day claim, persisted before any channel is called. This
+  // protects against concurrent processes and against a restart in the small
+  // window after Graph accepted the message but before the success marker.
+  const claim = await pool.query<{ value: string }>(
+    `INSERT INTO monitor_state (key, value, updated_at)
+     VALUES ('daily-report-claim', $1, now())
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_at = now()
+       WHERE monitor_state.value <> EXCLUDED.value
+     RETURNING value`,
+    [day],
   );
-  const actions = await pool.query<{
-    id: number;
-    action: string;
-    repo: string | null;
-    outcome: string;
-  }>(
-    `SELECT id, action, repo, outcome FROM action_log
-      WHERE reported_at IS NULL
-        AND kind IN ('auto_retry', 'auto_restart', 'manual_rerun')
-      ORDER BY created_at`,
-  );
-  const delivery = await notifyDailyFindings(
-    rows.rows.map((r) => ({ title: r.title, detail: r.detail })),
-    actions.rows.map(({ action, repo, outcome }) => ({ action, repo, outcome })),
-    day,
-  );
-  if (delivery.handled) {
-    await markActionsReported(actions.rows.map((action) => action.id));
-    await pool.query(
-      `UPDATE findings SET daily_sent_on = $1, updated_at = now()
-       WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'`,
-      [day],
+  if (!claim.rowCount) return;
+
+  let deliveryHandled = false;
+  try {
+    const rows = await pool.query<FindingRow>(
+      `SELECT id, kind, subject, title, detail, level, opened_at, resolved_at,
+              auto_resolved, immediate_sent_at
+         FROM findings
+        WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'
+        ORDER BY opened_at`,
     );
-  }
-  if (delivery.confirmed) {
-    await pool.query(
-      `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report', $1, now())
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-      [day],
+    const actions = await pool.query<{
+      id: number;
+      action: string;
+      repo: string | null;
+      outcome: string;
+    }>(
+      `SELECT id, action, repo, outcome FROM action_log
+        WHERE reported_at IS NULL
+          AND kind IN ('auto_retry', 'auto_restart', 'manual_rerun')
+        ORDER BY created_at`,
     );
-  } else if (delivery.handled) {
-    // A mail in the durable outbox is handled (so it must not be queued
-    // again), but it is not proof of delivery until Graph accepts its retry.
-    await pool.query(
-      `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report-pending', $1, now())
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-      [day],
+    const delivery = await notifyDailyFindings(
+      rows.rows.map((r) => ({ title: r.title, detail: r.detail })),
+      actions.rows.map(({ action, repo, outcome }) => ({ action, repo, outcome })),
+      day,
     );
+    deliveryHandled = delivery.handled;
+    if (delivery.handled) {
+      await markActionsReported(actions.rows.map((action) => action.id));
+      await pool.query(
+        `UPDATE findings SET daily_sent_on = $1, updated_at = now()
+         WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'`,
+        [day],
+      );
+    }
+    if (delivery.confirmed) {
+      await pool.query(
+        `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report', $1, now())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [day],
+      );
+    } else if (delivery.handled) {
+      // A mail in the durable outbox is handled (so it must not be queued
+      // again), but it is not proof of delivery until Graph accepts its retry.
+      await pool.query(
+        `INSERT INTO monitor_state (key, value, updated_at) VALUES ('daily-report-pending', $1, now())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [day],
+      );
+    } else {
+      // Nothing was sent or durably queued. Releasing this exact day's claim is
+      // safe: a later scheduler tick may try again without duplicating mail.
+      await pool.query(
+        "DELETE FROM monitor_state WHERE key = 'daily-report-claim' AND value = $1",
+        [day],
+      );
+    }
+  } catch (err) {
+    // Before any channel handled the report, a DB/provider error is safely
+    // retryable. Once handled, retain the claim: retrying could duplicate a
+    // report Graph already accepted.
+    if (!deliveryHandled) {
+      await pool.query(
+        "DELETE FROM monitor_state WHERE key = 'daily-report-claim' AND value = $1",
+        [day],
+      ).catch(() => {});
+    }
+    throw err;
   }
 }
 
@@ -297,6 +371,113 @@ export async function runFindingDelivery(now = new Date()): Promise<void> {
   }
 }
 
+let dailyReportInitialTimer: ReturnType<typeof setTimeout> | null = null;
+let dailyReportTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Milliseconds to the next wall-clock-aligned delivery check. */
+export function millisecondsUntilNextDailyReportCheck(
+  nowMs: number,
+  intervalMs = DAILY_REPORT_CHECK_INTERVAL_MS,
+): number {
+  return intervalMs - (nowMs % intervalMs);
+}
+
+/**
+ * Runs the 17:00 Amsterdam report independently from the slow repository poll.
+ * The gate in deliverDailyReport still decides whether today is due; this
+ * timer merely bounds scheduling jitter to 30 seconds.
+ */
+export function startDailyReportScheduler(): void {
+  if (dailyReportInitialTimer || dailyReportTimer) return;
+  const delay = millisecondsUntilNextDailyReportCheck(Date.now());
+  dailyReportInitialTimer = setTimeout(() => {
+    dailyReportInitialTimer = null;
+    runScheduledDailyReport();
+    dailyReportTimer = setInterval(
+      runScheduledDailyReport,
+      DAILY_REPORT_CHECK_INTERVAL_MS,
+    );
+    dailyReportTimer.unref?.();
+  }, delay);
+  dailyReportInitialTimer.unref?.();
+  logger.info(
+    { intervalMs: DAILY_REPORT_CHECK_INTERVAL_MS },
+    "Onafhankelijke dagberichtklok gestart (Europe/Amsterdam)",
+  );
+}
+
+function runScheduledDailyReport(): void {
+  void deliverDailyReport().catch((err) => {
+    logger.error({ err }, "Dagberichtklok kon de aflevering niet uitvoeren");
+  });
+}
+
+export function stopDailyReportScheduler(): void {
+  if (dailyReportInitialTimer) clearTimeout(dailyReportInitialTimer);
+  if (dailyReportTimer) clearInterval(dailyReportTimer);
+  dailyReportInitialTimer = null;
+  dailyReportTimer = null;
+}
+
+type HttpsFailureKind = "certificate" | "service";
+
+interface HttpsProbeResult {
+  ok: boolean;
+  failureKind?: HttpsFailureKind;
+  reason?: string;
+}
+
+const CERTIFICATE_ERROR_CODES = new Set([
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+function httpsErrorParts(err: unknown): { code: string; message: string } {
+  const error = err as {
+    code?: unknown;
+    message?: unknown;
+    cause?: { code?: unknown; message?: unknown };
+  };
+  return {
+    code: String(error.cause?.code ?? error.code ?? ""),
+    message: String(error.cause?.message ?? error.message ?? "onbekende fout"),
+  };
+}
+
+async function probeHttps(entry: string): Promise<HttpsProbeResult> {
+  try {
+    const response = await fetch(`https://${entry}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status < 500) return { ok: true };
+    return {
+      ok: false,
+      failureKind: "service",
+      reason: `De dienst reageert, maar geeft HTTP-status ${response.status}.`,
+    };
+  } catch (err) {
+    const { code, message } = httpsErrorParts(err);
+    if (CERTIFICATE_ERROR_CODES.has(code)) {
+      return {
+        ok: false,
+        failureKind: "certificate",
+        reason: `De dienst reageert, maar de TLS-controle faalt: ${message}`,
+      };
+    }
+    const reason =
+      code === "ECONNREFUSED"
+        ? "De dienst draait niet of poort 443 luistert niet: de verbinding wordt geweigerd."
+        : code === "ENOTFOUND"
+          ? "De hostnaam bestaat niet in DNS."
+          : code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT"
+            ? "De dienst reageert niet binnen tien seconden."
+            : `De HTTPS-verbinding mislukt: ${message}`;
+    return { ok: false, failureKind: "service", reason };
+  }
+}
+
 /** Check public HTTPS hosts; a finding only opens after three failed polls. */
 export async function checkPublicServices(now = new Date()): Promise<void> {
   const hosts = (process.env.EXPIRY_TLS_HOSTS ?? "")
@@ -304,14 +485,8 @@ export async function checkPublicServices(now = new Date()): Promise<void> {
   for (const entry of hosts) {
     const host = entry.split(":")[0]!;
     const stateKey = `availability:${entry}`;
-    let ok = false;
-    try {
-      const response = await fetch(`https://${entry}`, { signal: AbortSignal.timeout(10_000) });
-      ok = response.status < 500;
-    } catch {
-      ok = false;
-    }
-    if (ok) {
+    const probe = await probeHttps(entry);
+    if (probe.ok) {
       const restartRepo = restartRepoForHost(host);
       if (restartRepo) {
         await settleServiceRecovery(host, restartRepo);
@@ -324,18 +499,42 @@ export async function checkPublicServices(now = new Date()): Promise<void> {
       await resolveFinding(`public-service:${entry}`);
       continue;
     }
+    if (probe.failureKind === "certificate") {
+      // syncExpiryFindings owns certificate incidents. Reset the availability
+      // debounce and close any older generic outage finding so one broken
+      // certificate produces one direct message with one precise cause.
+      await pool.query(
+        `INSERT INTO monitor_state (key, value, updated_at) VALUES ($1, '0', now())
+         ON CONFLICT (key) DO UPDATE SET value = '0', updated_at = now()`,
+        [stateKey],
+      );
+      await resolveFinding(`public-service:${entry}`);
+      await openFinding({
+        id: `expiry:tls:${entry}`,
+        kind: "certificate_invalid",
+        subject: `tls:${entry}`,
+        title: `TLS-certificaat ${host} is ongeldig`,
+        detail: probe.reason ?? "De dienst draait, maar de TLS-controle faalt.",
+      });
+      continue;
+    }
     const previous = await pool.query<{ value: string }>(
       "SELECT value FROM monitor_state WHERE key = $1", [stateKey],
     );
-    let state: { count: number; firstAt: number };
+    let state: { count: number; firstAt: number; reason: string };
     try {
       const parsed = JSON.parse(previous.rows[0]?.value ?? "") as Partial<typeof state>;
       state = {
         count: Math.min(3, Number(parsed.count ?? 0) + 1),
         firstAt: Number(parsed.firstAt ?? now.getTime()),
+        reason: probe.reason ?? "De oorzaak kon niet worden bepaald.",
       };
     } catch {
-      state = { count: 1, firstAt: now.getTime() };
+      state = {
+        count: 1,
+        firstAt: now.getTime(),
+        reason: probe.reason ?? "De oorzaak kon niet worden bepaald.",
+      };
     }
     await pool.query(
       `INSERT INTO monitor_state (key, value, updated_at) VALUES ($1, $2, now())
@@ -355,6 +554,7 @@ export async function checkPublicServices(now = new Date()): Promise<void> {
       if (decision.holdNotification) continue;
       const detail = [
         "Drie opeenvolgende HTTPS-metingen in ongeveer tien minuten zijn mislukt.",
+        `Oorzaak: ${state.reason}`,
         decision.escalationDetail,
       ]
         .filter(Boolean)
@@ -372,7 +572,16 @@ export async function checkPublicServices(now = new Date()): Promise<void> {
 export async function syncExpiryFindings(): Promise<void> {
   let items: ExpiryItem[];
   try {
-    items = await listExpiryItems();
+    const [allItems, freshTlsItems] = await Promise.all([
+      listExpiryItems(),
+      listTlsExpiryItems(),
+    ]);
+    // TLS is operational state, not slow-changing registry metadata. Always
+    // replace cached TLS entries with a fresh handshake measurement.
+    items = [
+      ...allItems.filter((item) => item.category !== "tls_certificate"),
+      ...freshTlsItems,
+    ];
   } catch (err) {
     logger.warn({ err }, "Verloopcontroles overslaan: uitlezen mislukt");
     return;

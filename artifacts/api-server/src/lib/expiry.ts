@@ -166,7 +166,7 @@ function tlsCertExpiry(host: string, port: number): Promise<Date> {
   });
 }
 
-async function tlsItems(): Promise<ExpiryItem[]> {
+export async function listTlsExpiryItems(): Promise<ExpiryItem[]> {
   const hostsEnv = process.env.EXPIRY_TLS_HOSTS;
   if (!hostsEnv) {
     return [
@@ -199,6 +199,7 @@ async function tlsItems(): Promise<ExpiryItem[]> {
         return known(base, await tlsCertExpiry(host ?? entry, port));
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
+        const message = err instanceof Error ? err.message : "onbekende fout";
         if (
           code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
           code === "CERT_HAS_EXPIRED" ||
@@ -209,12 +210,14 @@ async function tlsItems(): Promise<ExpiryItem[]> {
             base,
             code === "CERT_HAS_EXPIRED"
               ? "Het certificaat is verlopen — bezoekers krijgen nu al een beveiligingswaarschuwing."
-              : "Het certificaat is ongeldig — bezoekers krijgen nu al een beveiligingswaarschuwing.",
+              : code === "ERR_TLS_CERT_ALTNAME_INVALID"
+                ? `De dienst draait, maar het certificaat hoort niet bij ${host}: ${message}`
+                : `De dienst draait, maar het certificaat is ongeldig: ${message}`,
           );
         }
         return unknown(
           base,
-          `certificaat kon niet worden uitgelezen (${err instanceof Error ? err.message : "onbekende fout"})`,
+          `certificaat kon niet worden uitgelezen (${message})`,
         );
       }
     }),
@@ -562,7 +565,7 @@ export async function listExpiryItems(bypassCache = false): Promise<ExpiryItem[]
       process.env.GITHUB_PUSH_TOKEN,
       "geen pushtoken geconfigureerd — vul de geheime variabele GITHUB_PUSH_TOKEN zodat de einddatum bewaakt kan worden",
     ),
-    tlsItems(),
+    listTlsExpiryItems(),
     azureItem(),
     domainItems(),
   ]);

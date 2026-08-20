@@ -24,6 +24,7 @@ vi.mock("./logger.js", () => ({
 }));
 vi.mock("./expiry.js", () => ({
   listExpiryItems: vi.fn(async () => []),
+  listTlsExpiryItems: vi.fn(async () => []),
 }));
 vi.mock("./selfheal.js", () => ({
   restartRepoForHost: vi.fn(() => null),
@@ -38,6 +39,7 @@ import {
   checkPublicServices,
   deliverDailyReport,
   deliverImmediateFindings,
+  millisecondsUntilNextDailyReportCheck,
   updateFindingLevel,
 } from "./findings.js";
 import { notifyDailyFindings, notifyFinding } from "./notifications.js";
@@ -74,6 +76,7 @@ describe("NU delivery", () => {
     clientQuery
       .mockResolvedValueOnce({ rows: [{ acquired: true }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [finding] })
+      .mockResolvedValueOnce({ rows: [{ id: finding.id }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }], rowCount: 1 });
     vi.mocked(notifyFinding).mockResolvedValue(true);
@@ -85,7 +88,8 @@ describe("NU delivery", () => {
       finding.detail,
       "NU",
     );
-    expect(clientQuery.mock.calls[2]?.[0]).toContain("immediate_sent_at");
+    expect(clientQuery.mock.calls[2]?.[0]).toContain("immediate_claim_token");
+    expect(clientQuery.mock.calls[3]?.[0]).toContain("immediate_sent_at = now()");
   });
 
   it("holds a 02:00 NU finding and sends it at 07:15 Amsterdam", async () => {
@@ -98,6 +102,7 @@ describe("NU delivery", () => {
     clientQuery
       .mockResolvedValueOnce({ rows: [{ acquired: true }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [finding] })
+      .mockResolvedValueOnce({ rows: [{ id: finding.id }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }], rowCount: 1 });
     await deliverImmediateFindings(new Date("2026-08-17T05:15:00Z"));
@@ -112,6 +117,49 @@ describe("NU delivery", () => {
     expect(notifyFinding).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledOnce();
   });
+
+  it("claims a finding before sending so a second process cannot duplicate it", async () => {
+    clientQuery
+      .mockResolvedValueOnce({ rows: [{ acquired: true }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [finding] })
+      .mockResolvedValueOnce({ rows: [{ id: finding.id }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }], rowCount: 1 });
+    vi.mocked(notifyFinding).mockResolvedValue(true);
+
+    await deliverImmediateFindings(new Date("2026-08-17T12:00:00Z"));
+
+    expect(String(clientQuery.mock.calls[2]?.[0])).toContain(
+      "immediate_claim_token = $2",
+    );
+    expect(String(clientQuery.mock.calls[3]?.[0])).toContain(
+      "immediate_sent_at = now()",
+    );
+    expect(clientQuery.mock.calls[2]?.[1]?.[1]).toBe(
+      clientQuery.mock.calls[3]?.[1]?.[1],
+    );
+    expect(notifyFinding).toHaveBeenCalledOnce();
+  });
+
+  it("releases its claim when no channel handled the finding", async () => {
+    clientQuery
+      .mockResolvedValueOnce({ rows: [{ acquired: true }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [finding] })
+      .mockResolvedValueOnce({ rows: [{ id: finding.id }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }], rowCount: 1 });
+    vi.mocked(notifyFinding).mockResolvedValue(false);
+
+    await deliverImmediateFindings(new Date("2026-08-17T12:00:00Z"));
+
+    expect(String(clientQuery.mock.calls[3]?.[0])).toContain(
+      "immediate_claim_token = NULL",
+    );
+    expect(clientQuery.mock.calls[3]?.[1]?.[0]).toBe(finding.id);
+    expect(clientQuery.mock.calls[3]?.[1]?.[1]).toBe(
+      clientQuery.mock.calls[2]?.[1]?.[1],
+    );
+  });
 });
 
 describe("17:00 workday report", () => {
@@ -124,6 +172,7 @@ describe("17:00 workday report", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ value: "2026-08-17" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [waiting] })
       .mockResolvedValueOnce({ rows: [{ id: 7, action: "Controle herhaald", repo: "api", outcome: "geslaagd" }] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
@@ -141,7 +190,12 @@ describe("17:00 workday report", () => {
   });
 
   it("sends a proof-of-monitoring report on a clean workday", async () => {
-    query.mockResolvedValue({ rows: [], rowCount: 1 });
+    query.mockImplementation(async (sql: string) => ({
+      rows: String(sql).includes("RETURNING value")
+        ? [{ value: "2026-08-18" }]
+        : [],
+      rowCount: 1,
+    }));
     vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
 
     await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
@@ -162,6 +216,7 @@ describe("17:00 workday report", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ value: "2026-08-18" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [action] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
@@ -178,7 +233,12 @@ describe("17:00 workday report", () => {
   });
 
   it("does not treat a mail that is only queued as confirmed delivery", async () => {
-    query.mockResolvedValue({ rows: [], rowCount: 1 });
+    query.mockImplementation(async (sql: string) => ({
+      rows: String(sql).includes("RETURNING value")
+        ? [{ value: "2026-08-18" }]
+        : [],
+      rowCount: 1,
+    }));
     vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: false });
 
     await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
@@ -195,13 +255,41 @@ describe("17:00 workday report", () => {
   });
 
   it("uses 17:00 Amsterdam during winter time too", async () => {
-    query.mockResolvedValue({ rows: [], rowCount: 1 });
+    query.mockImplementation(async (sql: string) => ({
+      rows: String(sql).includes("RETURNING value")
+        ? [{ value: "2026-01-19" }]
+        : [],
+      rowCount: 1,
+    }));
     vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
 
     // 17:00 CET on a Monday; the same instant is only 16:00 UTC.
     await deliverDailyReport(new Date("2026-01-19T16:00:00Z"));
 
     expect(notifyDailyFindings).toHaveBeenCalledWith([], [], "2026-01-19");
+  });
+
+  it("lets only one concurrent process claim a day's report", async () => {
+    query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
+
+    expect(notifyDailyFindings).not.toHaveBeenCalled();
+    expect(
+      query.mock.calls.some(([sql]) =>
+        String(sql).includes("daily-report-claim"),
+      ),
+    ).toBe(true);
+  });
+
+  it("aligns the independent scheduler to a 30-second wall-clock boundary", () => {
+    expect(millisecondsUntilNextDailyReportCheck(30_000)).toBe(30_000);
+    expect(millisecondsUntilNextDailyReportCheck(30_001)).toBe(29_999);
+    expect(millisecondsUntilNextDailyReportCheck(59_999)).toBe(1);
   });
 });
 
@@ -222,6 +310,70 @@ describe("availability debounce and editable levels", () => {
 
     const sql = query.mock.calls.map((call) => String(call[0])).join("\n");
     expect(sql).not.toContain("INSERT INTO findings");
+  });
+
+  it("opens one precise certificate finding and suppresses the generic outage", async () => {
+    process.env.EXPIRY_TLS_HOSTS = "sparki-insight.nl";
+    const certificateError = Object.assign(new Error("fetch failed"), {
+      cause: Object.assign(
+        new Error(
+          "Host: sparki-insight.nl is not in the cert's altnames: DNS:*.vdx.nl",
+        ),
+        { code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      ),
+    });
+    vi.mocked(fetch).mockRejectedValue(certificateError);
+    query.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    await checkPublicServices(new Date("2026-08-20T08:09:00Z"));
+
+    const allSql = query.mock.calls.map(([sql]) => String(sql)).join("\n");
+    expect(allSql).toContain("VALUES ($1, '0', now())");
+    const inserts = query.mock.calls.filter(([sql]) =>
+      String(sql).includes("INSERT INTO findings"),
+    );
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]?.[1]?.[0]).toBe("expiry:tls:sparki-insight.nl");
+    expect(inserts[0]?.[1]?.[2]).toBe("tls:sparki-insight.nl");
+    expect(inserts[0]?.[1]?.[4]).toContain(
+      "DNS:*.vdx.nl",
+    );
+    expect(inserts[0]?.[1]?.[5]).toBe("NU");
+  });
+
+  it("opens a direct service finding with the measured outage cause", async () => {
+    process.env.EXPIRY_TLS_HOSTS = "offline.example";
+    const refused = Object.assign(new Error("fetch failed"), {
+      cause: Object.assign(new Error("connect ECONNREFUSED"), {
+        code: "ECONNREFUSED",
+      }),
+    });
+    vi.mocked(fetch).mockRejectedValue(refused);
+    query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            value: JSON.stringify({
+              count: 2,
+              firstAt: new Date("2026-08-20T08:00:00Z").getTime(),
+            }),
+          },
+        ],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ level: "NU" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    await checkPublicServices(new Date("2026-08-20T08:10:00Z"));
+
+    const findingInsert = query.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO findings"),
+    );
+    expect(findingInsert?.[1]?.[4]).toContain(
+      "De dienst draait niet of poort 443 luistert niet",
+    );
+    expect(findingInsert?.[1]?.[5]).toBe("NU");
   });
 
   it("updates the database policy and all matching open findings", async () => {

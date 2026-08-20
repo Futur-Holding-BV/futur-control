@@ -12,6 +12,7 @@ export const findings = pgTable("findings", {
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   autoResolved: boolean("auto_resolved").notNull().default(false),
   immediateSentAt: timestamp("immediate_sent_at", { withTimezone: true }),
+  immediateClaimToken: text("immediate_claim_token"),
   dailySentOn: text("daily_sent_on"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });

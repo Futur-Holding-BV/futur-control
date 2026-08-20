@@ -8,6 +8,7 @@ import { startMonitor } from "./lib/monitor";
 import { ensureTablesExist } from "@workspace/db";
 import { cleanupExpiredLoginAttempts } from "./lib/auth";
 import { startWatchdog } from "./lib/watchdog";
+import { startDailyReportScheduler } from "./lib/findings";
 
 const app: Express = express();
 
@@ -35,16 +36,30 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
-// Starts independently of database migration so a DB outage can still be
-// reported directly through Graph mail.
-startWatchdog();
+// Only the published production service may send operational messages.
+// Preview workflows and isolated task-agent environments use separate
+// databases, so allowing their timers to run would duplicate every email.
+const backgroundJobsEnabled = process.env.NODE_ENV === "production";
+
+if (backgroundJobsEnabled) {
+  // Starts independently of database migration so a DB outage can still be
+  // reported directly through Graph mail.
+  startWatchdog();
+} else {
+  logger.info(
+    "Achtergrondbewaking uitgeschakeld buiten productie — voorkomt dubbele meldingen",
+  );
+}
 
 // Run idempotent startup migration then start the background monitor.
 // Both steps are non-blocking so the HTTP server comes up immediately.
 ensureTablesExist()
   .then(() => {
     logger.info("Databaseschema geverifieerd");
-    startMonitor();
+    if (backgroundJobsEnabled) {
+      startMonitor();
+      startDailyReportScheduler();
+    }
     // Periodically purge expired login-attempt rows (every 10 minutes).
     setInterval(() => {
       cleanupExpiredLoginAttempts().catch((err: unknown) => {
