@@ -280,6 +280,52 @@ export interface NotificationSettings {
   updatedAt?: string | null;
 }
 
+export type FindingLevel = typeof FindingLevel[keyof typeof FindingLevel];
+
+
+export const FindingLevel = {
+  NU: 'NU',
+  KAN_WACHTEN: 'KAN_WACHTEN',
+} as const;
+
+export interface Finding {
+  id: string;
+  kind: string;
+  subject: string;
+  title: string;
+  detail: string;
+  level: FindingLevel;
+  openedAt: string;
+  /** @nullable */
+  resolvedAt: string | null;
+  autoResolved: boolean;
+}
+
+export type FindingLevelSettingLevel = typeof FindingLevelSettingLevel[keyof typeof FindingLevelSettingLevel];
+
+
+export const FindingLevelSettingLevel = {
+  NU: 'NU',
+  KAN_WACHTEN: 'KAN_WACHTEN',
+} as const;
+
+export interface FindingLevelSetting {
+  kind: string;
+  level: FindingLevelSettingLevel;
+}
+
+export type FindingLevelUpdateLevel = typeof FindingLevelUpdateLevel[keyof typeof FindingLevelUpdateLevel];
+
+
+export const FindingLevelUpdateLevel = {
+  NU: 'NU',
+  KAN_WACHTEN: 'KAN_WACHTEN',
+} as const;
+
+export interface FindingLevelUpdate {
+  level: FindingLevelUpdateLevel;
+}
+
 export type ListExpiryItemsParams = {
 refresh?: string;
 };

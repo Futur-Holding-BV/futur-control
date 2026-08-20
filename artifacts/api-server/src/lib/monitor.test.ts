@@ -68,6 +68,18 @@ vi.mock("./actionlog.js", () => ({
   logAction: vi.fn(async () => 1),
 }));
 
+vi.mock("./findings.js", () => ({
+  openFinding: vi.fn(async () => undefined),
+  resolveFinding: vi.fn(async () => undefined),
+  checkPublicServices: vi.fn(async () => undefined),
+  syncExpiryFindings: vi.fn(async () => undefined),
+  runFindingDelivery: vi.fn(async () => undefined),
+}));
+
+vi.mock("./watchdog.js", () => ({
+  recordSuccessfulMonitorRound: vi.fn(async () => undefined),
+}));
+
 // ---------------------------------------------------------------------------
 // Imports (after mocks so the mocked versions are used)
 // ---------------------------------------------------------------------------
@@ -82,6 +94,7 @@ import {
   notifyAnomaly,
 } from "./notifications.js";
 import { maybeAutoRetry } from "./selfheal.js";
+import { openFinding } from "./findings.js";
 import type { RepoSummary, Anomaly } from "./github.js";
 
 // ---------------------------------------------------------------------------
@@ -183,18 +196,18 @@ describe("pollAll — anomaly notification", () => {
     vi.resetAllMocks();
   });
 
-  it("notifies when a new anomaly is detected (SHA not yet notified)", async () => {
+  it("registers a waiting finding when a new anomaly is detected", async () => {
     mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
 
     await pollAll();
 
-    expect(notifyAnomaly).toHaveBeenCalledOnce();
-    expect(notifyAnomaly).toHaveBeenCalledWith(
-      repoName,
-      exampleAnomaly,
-      expect.any(String),
-    );
+    expect(notifyAnomaly).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "anomaly",
+      subject: repoName,
+      detail: expect.stringContaining(exampleAnomaly.fileName),
+    }));
   });
 
   it("does NOT re-notify for an anomaly whose SHA was already notified", async () => {
@@ -222,10 +235,11 @@ describe("pollAll — anomaly notification", () => {
 
     await pollAll();
 
-    expect(notifyAnomaly).toHaveBeenCalledOnce();
+    expect(notifyAnomaly).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledOnce();
   });
 
-  it("does NOT advance notifiedAnomalySha when delivery fails", async () => {
+  it("advances notifiedAnomalySha after the finding is durably registered", async () => {
     mockSnapshot({ status: "green", notifiedStatus: "green", notifiedAnomalySha: null });
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ anomaly: exampleAnomaly }));
     vi.mocked(notifyAnomaly).mockResolvedValue(false);
@@ -233,7 +247,7 @@ describe("pollAll — anomaly notification", () => {
     await pollAll();
 
     const saved = savedSnapshot(0);
-    expect(saved["notifiedAnomalySha"]).toBeNull();
+    expect(saved["notifiedAnomalySha"]).toBe(exampleAnomaly.commitSha);
   });
 
   it("does not call notifyAnomaly when no anomaly is present", async () => {
@@ -292,10 +306,17 @@ describe("pollAll — full repo coverage", () => {
     vi.mocked(db.select).mockReturnValue(
       selectMock as unknown as ReturnType<typeof db.select>,
     );
+  });
 
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("resolves without throwing when db.insert rejects", async () => {
+    // Simulate a database write failure inside saveSnapshot.
     const insertMock = {
       values: vi.fn().mockReturnThis(),
-      onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+      onConflictDoUpdate: vi.fn().mockRejectedValue(new Error("DB write failed")),
     };
     vi.mocked(db.insert).mockReturnValue(
       insertMock as unknown as ReturnType<typeof db.insert>,
@@ -387,7 +408,8 @@ describe("pollAll — saveSnapshot failure handling", () => {
 
     // Must not throw even though saveSnapshot will catch and swallow the error.
     await expect(pollAll()).resolves.toBeUndefined();
-    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalled();
     expect(db.insert).toHaveBeenCalled();
   });
 });
@@ -452,7 +474,7 @@ describe("pollAll — staleness-red notification", () => {
     vi.resetAllMocks();
   });
 
-  it("calls notifyRepoRed when staleReason is set and does NOT call maybeAutoRetry", async () => {
+  it("registers a waiting finding when staleReason is set and does NOT auto-retry", async () => {
     // Repo has been stale-red for 30 minutes (past the 10-min debounce).
     mockSnapshot({
       status: "red",
@@ -469,8 +491,11 @@ describe("pollAll — staleness-red notification", () => {
 
     await pollAll();
 
-    // Slack notification must fire.
-    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "build_failed",
+      subject: repoName,
+    }));
     // Self-heal must be skipped — there is no failed run to rerun.
     expect(maybeAutoRetry).not.toHaveBeenCalled();
   });
@@ -492,7 +517,8 @@ describe("pollAll — staleness-red notification", () => {
 
     await pollAll();
 
-    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledOnce();
     // notifiedStatus must have been persisted as "red".
     const saved1 = savedSnapshot(0);
     expect(saved1["notifiedStatus"]).toBe("red");
@@ -550,8 +576,9 @@ describe("pollAll — staleness-red notification", () => {
 
     await pollAll();
 
-    // A fresh red after recovery must fire another Slack notification.
-    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    // A fresh red after recovery must open the finding again.
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledOnce();
     expect(maybeAutoRetry).not.toHaveBeenCalled();
   });
 });

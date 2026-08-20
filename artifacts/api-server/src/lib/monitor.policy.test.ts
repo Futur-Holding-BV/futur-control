@@ -54,6 +54,18 @@ vi.mock("./actionlog.js", () => ({
   logAction: vi.fn(async () => 1),
 }));
 
+vi.mock("./findings.js", () => ({
+  openFinding: vi.fn(async () => undefined),
+  resolveFinding: vi.fn(async () => undefined),
+  checkPublicServices: vi.fn(async () => undefined),
+  syncExpiryFindings: vi.fn(async () => undefined),
+  runFindingDelivery: vi.fn(async () => undefined),
+}));
+
+vi.mock("./watchdog.js", () => ({
+  recordSuccessfulMonitorRound: vi.fn(async () => undefined),
+}));
+
 import { pollAll } from "./monitor.js";
 import { db } from "@workspace/db";
 import { listMonitoredRepos, repoSummary } from "./github.js";
@@ -63,6 +75,7 @@ import {
 } from "./notifications.js";
 import { maybeAutoRetry } from "./selfheal.js";
 import { logAction } from "./actionlog.js";
+import { openFinding } from "./findings.js";
 import type { RepoSummary } from "./github.js";
 
 const repoName = "fps-api";
@@ -177,7 +190,7 @@ describe("debounce — 10 minutes before a notification goes out", () => {
     expect(savedSnapshot(1)["problemSince"]).toBeNull();
   });
 
-  it("a problem of 30 minutes is notified", async () => {
+  it("a problem of 30 minutes becomes a waiting finding", async () => {
     vi.setSystemTime(new Date(MONDAY_NOON_UTC));
     const problemSince = new Date(Date.now() - 30 * 60 * 1000);
 
@@ -185,13 +198,17 @@ describe("debounce — 10 minutes before a notification goes out", () => {
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red" }));
     await pollAll();
 
-    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "build_failed",
+      subject: repoName,
+    }));
     expect(savedSnapshot(0)["notifiedStatus"]).toBe("red");
   });
 });
 
 describe("quiet window (Europe/Amsterdam)", () => {
-  it("a problem that starts at 02:00 and is still open at 07:15 is notified only then", async () => {
+  it("a waiting problem is registered during quiet hours without direct delivery", async () => {
     // 02:30 — problem is 30 minutes old but inside the quiet window.
     vi.setSystemTime(new Date(MONDAY_0230_UTC));
     const problemSince = new Date(MONDAY_0200_UTC);
@@ -199,6 +216,7 @@ describe("quiet window (Europe/Amsterdam)", () => {
     vi.mocked(repoSummary).mockResolvedValue(makeSummary({ status: "red" }));
     await pollAll();
     expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledOnce();
     // The problem clock keeps running during the quiet window.
     expect(savedSnapshot(0)["problemSince"]).toEqual(problemSince);
 
@@ -206,11 +224,12 @@ describe("quiet window (Europe/Amsterdam)", () => {
     vi.setSystemTime(new Date(MONDAY_0715_UTC));
     mockSnapshot({ status: "red", notifiedStatus: "green", problemSince });
     await pollAll();
-    expect(notifyRepoRed).toHaveBeenCalledOnce();
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledTimes(2);
     expect(savedSnapshot(1)["notifiedStatus"]).toBe("red");
   });
 
-  it("two problems still open at 07:15 go out as ONE bundled message", async () => {
+  it("two problems still open at 07:15 become two waiting findings", async () => {
     const repos = ["repo-a", "repo-b"];
     vi.mocked(listMonitoredRepos).mockResolvedValue(repos);
     vi.setSystemTime(new Date(MONDAY_0715_UTC));
@@ -226,7 +245,8 @@ describe("quiet window (Europe/Amsterdam)", () => {
     await pollAll();
 
     expect(notifyRepoRed).not.toHaveBeenCalled();
-    expect(notifyMultipleReposRed).toHaveBeenCalledOnce();
+    expect(notifyMultipleReposRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledTimes(2);
   });
 
   it("a problem that starts at 02:00 and resolves at 04:00 is logged, never notified", async () => {
@@ -250,7 +270,7 @@ describe("quiet window (Europe/Amsterdam)", () => {
 });
 
 describe("unknown status counts as a problem", () => {
-  it("gray for 30 minutes notifies with an 'unknown status' reason", async () => {
+  it("gray for 30 minutes becomes a codebase-without-check finding", async () => {
     vi.setSystemTime(new Date(MONDAY_NOON_UTC));
     mockSnapshot({
       status: "gray",
@@ -263,9 +283,11 @@ describe("unknown status counts as a problem", () => {
 
     await pollAll();
 
-    expect(notifyRepoRed).toHaveBeenCalledOnce();
-    const notified = vi.mocked(notifyRepoRed).mock.calls[0]![0];
-    expect(notified.failReason).toContain("onbekend");
+    expect(notifyRepoRed).not.toHaveBeenCalled();
+    expect(openFinding).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "repo_without_check",
+      detail: expect.stringContaining("onbekend"),
+    }));
     expect(savedSnapshot(0)["notifiedStatus"]).toBe("gray");
     // Gray never triggers a self-heal rerun (nothing failed to rerun).
     expect(maybeAutoRetry).not.toHaveBeenCalled();

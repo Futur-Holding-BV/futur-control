@@ -60,6 +60,37 @@ async function mailSafe(subject: string, body: string): Promise<boolean> {
   }
 }
 
+/** Generic policy-driven fanout. Monitor code decides timing, this only delivers. */
+export async function notifyFinding(
+  title: string,
+  detail: string,
+  level: "NU" | "KAN_WACHTEN",
+): Promise<boolean> {
+  if (!isEnabled()) return false;
+  const prefix = level === "NU" ? "🔴" : "📋";
+  const webhookUrl = resolveWebhookUrl();
+  const slackDelivered = webhookUrl
+    ? await post(webhookUrl, { text: `${prefix} ${title}\n${detail}` })
+    : false;
+  const pushDelivered = await pushSafe({ title: `${prefix} ${title}`, body: detail, url: "/", tag: `finding-${title}` });
+  const mailDelivered = await mailSafe(`${prefix} ${title}`, detail);
+  return slackDelivered || pushDelivered || mailDelivered;
+}
+
+export async function notifyDailyFindings(
+  findings: Array<{ title: string; detail: string }>,
+  actions: Array<{ action: string; repo: string | null; outcome: string }> = [],
+): Promise<boolean> {
+  const findingBody = findings.map((finding) => `• ${finding.title}\n  ${finding.detail}`).join("\n\n");
+  const actionBody = actions.length > 0
+    ? `\n\nUitgevoerde herstelhandelingen:\n${actions
+        .map((action) => `• ${action.action}${action.repo ? ` (${action.repo})` : ""}: ${action.outcome}`)
+        .join("\n")}`
+    : "";
+  const body = `${findingBody}${actionBody}`;
+  return notifyFinding("Dagbericht: open aandachtspunten", body, "KAN_WACHTEN");
+}
+
 // ---------------------------------------------------------------------------
 // Allowed webhook host — strict allowlist to prevent SSRF
 // ---------------------------------------------------------------------------

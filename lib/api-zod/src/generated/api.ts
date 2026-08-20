@@ -208,6 +208,7 @@ export const GetNotificationSettingsResponse = zod.object({
   "updatedAt": zod.coerce.date().nullish()
 })
 
+
 /**
  * Sends a test e-mail from MAIL_FROM to all MAIL_TO addresses so the operator can verify the mail channel end-to-end.
  * @summary Send a test e-mail via Microsoft Graph
@@ -215,6 +216,52 @@ export const GetNotificationSettingsResponse = zod.object({
 export const SendTestMailResponse = zod.object({
   "ok": zod.boolean()
 })
+
+
+/**
+ * @summary List current and recently resolved findings
+ */
+export const ListFindingsResponseItem = zod.object({
+  "id": zod.string(),
+  "kind": zod.string(),
+  "subject": zod.string(),
+  "title": zod.string(),
+  "detail": zod.string(),
+  "level": zod.enum(['NU', 'KAN_WACHTEN']),
+  "openedAt": zod.coerce.date(),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "autoResolved": zod.boolean()
+})
+export const ListFindingsResponse = zod.array(ListFindingsResponseItem)
+
+
+/**
+ * @summary List editable delivery levels by finding kind
+ */
+export const ListFindingLevelsResponseItem = zod.object({
+  "kind": zod.string(),
+  "level": zod.enum(['NU', 'KAN_WACHTEN'])
+})
+export const ListFindingLevelsResponse = zod.array(ListFindingLevelsResponseItem)
+
+
+/**
+ * @summary Change the delivery level for a finding kind
+ */
+export const UpdateFindingLevelParams = zod.object({
+  "kind": zod.coerce.string()
+})
+
+export const UpdateFindingLevelBody = zod.object({
+  "level": zod.enum(['NU', 'KAN_WACHTEN'])
+})
+
+export const UpdateFindingLevelResponse = zod.object({
+  "kind": zod.string(),
+  "level": zod.enum(['NU', 'KAN_WACHTEN'])
+})
+
+
 /**
  * Returns one row per monitored expiring item (GitHub tokens, TLS certificates, Azure client key, domain renewals). Items that cannot be read are returned with severity "unknown" and a reason — never as ok.
  * @summary List upcoming expirations

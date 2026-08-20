@@ -199,10 +199,17 @@ async function tlsItems(): Promise<ExpiryItem[]> {
         return known(base, await tlsCertExpiry(host ?? entry, port));
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
-        if (code === "ERR_TLS_CERT_ALTNAME_INVALID") {
+        if (
+          code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
+          code === "CERT_HAS_EXPIRED" ||
+          code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
+          code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+        ) {
           return redAlert(
             base,
-            "Het certificaat is uitgegeven voor een andere domeinnaam — bezoekers krijgen nu al een beveiligingswaarschuwing.",
+            code === "CERT_HAS_EXPIRED"
+              ? "Het certificaat is verlopen — bezoekers krijgen nu al een beveiligingswaarschuwing."
+              : "Het certificaat is ongeldig — bezoekers krijgen nu al een beveiligingswaarschuwing.",
           );
         }
         return unknown(
@@ -224,9 +231,9 @@ async function azureItem(): Promise<ExpiryItem> {
     consequence:
       "FPS Connect kan dan niet meer inloggen bij Azure; de koppelingen van FPS Connect vallen uit.",
   };
-  const tenantId = process.env.AZURE_TENANT_ID;
-  const clientId = process.env.AZURE_CLIENT_ID;
-  const clientSecret = process.env.AZURE_CLIENT_SECRET;
+  const tenantId = process.env.GRAPH_TENANT_ID ?? process.env.AZURE_TENANT_ID;
+  const clientId = process.env.GRAPH_CLIENT_ID ?? process.env.AZURE_CLIENT_ID;
+  const clientSecret = process.env.GRAPH_CLIENT_SECRET ?? process.env.AZURE_CLIENT_SECRET;
   if (!tenantId || !clientId || !clientSecret) {
     return unknown(
       base,

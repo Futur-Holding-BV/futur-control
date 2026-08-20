@@ -24,6 +24,9 @@ import type {
   ActionResult,
   ApiErrorMessage,
   ExpiryItem,
+  Finding,
+  FindingLevelSetting,
+  FindingLevelUpdate,
   HealthStatus,
   LeesSleutelAangemaakt,
   LeesSleutelAanmaakVerzoek,
@@ -52,6 +55,7 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 
+
 const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKey: K } => {
   const result = { queryKey } as T & { queryKey: K };
   for (const key of Object.keys(query)) {
@@ -68,6 +72,8 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
 };
 
 export const getHealthCheckUrl = () => {
+
+
 
 
   return `/api/healthz`
@@ -89,6 +95,9 @@ export const healthCheck = async ( options?: Parameters<typeof customFetch>[1]):
 );}
 
 
+
+
+
 export const getHealthCheckQueryKey = () => {
     return [
     `/api/healthz`
@@ -104,7 +113,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getHealthCheckQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof healthCheck>>> = ({ signal }) => healthCheck({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData> & { queryKey: QueryKey }
@@ -131,7 +144,14 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 }
 
 
+
+
+
+
+
 export const getListReposUrl = () => {
+
+
 
 
   return `/api/repos`
@@ -153,6 +173,9 @@ export const listRepos = async ( options?: Parameters<typeof customFetch>[1]): P
 );}
 
 
+
+
+
 export const getListReposQueryKey = () => {
     return [
     `/api/repos`
@@ -168,7 +191,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getListReposQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listRepos>>> = ({ signal }) => listRepos({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRepos>>, TError, TData> & { queryKey: QueryKey }
@@ -195,7 +222,14 @@ export function useListRepos<TData = Awaited<ReturnType<typeof listRepos>>, TErr
 }
 
 
+
+
+
+
+
 export const getGetRepoDetailUrl = (name: string,) => {
+
+
 
 
   return `/api/repos/${name}/detail`
@@ -217,6 +251,9 @@ export const getRepoDetail = async (name: string, options?: Parameters<typeof cu
 );}
 
 
+
+
+
 export const getGetRepoDetailQueryKey = (name: string,) => {
     return [
     `/api/repos/${name}/detail`
@@ -232,7 +269,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getGetRepoDetailQueryKey(name);
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getRepoDetail>>> = ({ signal }) => getRepoDetail(name, { signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, enabled: name !== null && name !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRepoDetail>>, TError, TData> & { queryKey: QueryKey }
@@ -259,7 +300,14 @@ export function useGetRepoDetail<TData = Awaited<ReturnType<typeof getRepoDetail
 }
 
 
+
+
+
+
+
 export const getGetRepoSettingsUrl = (name: string,) => {
+
+
 
 
   return `/api/repos/${name}/settings`
@@ -281,6 +329,9 @@ export const getRepoSettings = async (name: string, options?: Parameters<typeof 
 );}
 
 
+
+
+
 export const getGetRepoSettingsQueryKey = (name: string,) => {
     return [
     `/api/repos/${name}/settings`
@@ -296,7 +347,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getGetRepoSettingsQueryKey(name);
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getRepoSettings>>> = ({ signal }) => getRepoSettings(name, { signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, enabled: name !== null && name !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRepoSettings>>, TError, TData> & { queryKey: QueryKey }
@@ -323,7 +378,14 @@ export function useGetRepoSettings<TData = Awaited<ReturnType<typeof getRepoSett
 }
 
 
+
+
+
+
+
 export const getUpdateRepoSettingsUrl = (name: string,) => {
+
+
 
 
   return `/api/repos/${name}/settings`
@@ -346,6 +408,9 @@ export const updateRepoSettings = async (name: string,
 );}
 
 
+
+
+
 export const getUpdateRepoSettingsMutationOptions = <TError = ErrorType<ApiErrorMessage>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRepoSettings>>, TError,{name: string;data: BodyType<RepoSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateRepoSettings>>, TError,{name: string;data: BodyType<RepoSettingsUpdate>}, TContext> => {
@@ -358,11 +423,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateRepoSettings>>, {name: string;data: BodyType<RepoSettingsUpdate>}> = (props) => {
           const {name,data} = props ?? {};
 
           return  updateRepoSettings(name,data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -388,6 +459,8 @@ export const useUpdateRepoSettings = <TError = ErrorType<ApiErrorMessage>,
 export const getGetPushPublicKeyUrl = () => {
 
 
+
+
   return `/api/push/public-key`
 }
 
@@ -406,6 +479,9 @@ export const getPushPublicKey = async ( options?: Parameters<typeof customFetch>
 );}
 
 
+
+
+
 export const getGetPushPublicKeyQueryKey = () => {
     return [
     `/api/push/public-key`
@@ -421,7 +497,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getGetPushPublicKeyQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getPushPublicKey>>> = ({ signal }) => getPushPublicKey({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPushPublicKey>>, TError, TData> & { queryKey: QueryKey }
@@ -448,7 +528,14 @@ export function useGetPushPublicKey<TData = Awaited<ReturnType<typeof getPushPub
 }
 
 
+
+
+
+
+
 export const getSubscribePushUrl = () => {
+
+
 
 
   return `/api/push/subscribe`
@@ -469,6 +556,9 @@ export const subscribePush = async (pushSubscribeRequest: PushSubscribeRequest, 
 );}
 
 
+
+
+
 export const getSubscribePushMutationOptions = <TError = ErrorType<ApiErrorMessage>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof subscribePush>>, TError,{data: BodyType<PushSubscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof subscribePush>>, TError,{data: BodyType<PushSubscribeRequest>}, TContext> => {
@@ -481,11 +571,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof subscribePush>>, {data: BodyType<PushSubscribeRequest>}> = (props) => {
           const {data} = props ?? {};
 
           return  subscribePush(data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -511,6 +607,8 @@ export const useSubscribePush = <TError = ErrorType<ApiErrorMessage>,
 export const getUnsubscribePushUrl = () => {
 
 
+
+
   return `/api/push/unsubscribe`
 }
 
@@ -529,6 +627,9 @@ export const unsubscribePush = async (pushUnsubscribeRequest: PushUnsubscribeReq
 );}
 
 
+
+
+
 export const getUnsubscribePushMutationOptions = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unsubscribePush>>, TError,{data: BodyType<PushUnsubscribeRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof unsubscribePush>>, TError,{data: BodyType<PushUnsubscribeRequest>}, TContext> => {
@@ -541,11 +642,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof unsubscribePush>>, {data: BodyType<PushUnsubscribeRequest>}> = (props) => {
           const {data} = props ?? {};
 
           return  unsubscribePush(data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -571,6 +678,8 @@ export const useUnsubscribePush = <TError = ErrorType<unknown>,
 export const getSendPushTestUrl = () => {
 
 
+
+
   return `/api/push/test`
 }
 
@@ -589,6 +698,9 @@ export const sendPushTest = async ( options?: Parameters<typeof customFetch>[1])
 );}
 
 
+
+
+
 export const getSendPushTestMutationOptions = <TError = ErrorType<ApiErrorMessage>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendPushTest>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof sendPushTest>>, TError,void, TContext> => {
@@ -601,11 +713,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendPushTest>>, void> = () => {
 
 
           return  sendPushTest(requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -631,6 +749,8 @@ export const useSendPushTest = <TError = ErrorType<ApiErrorMessage>,
 export const getListLeesSleutelsUrl = () => {
 
 
+
+
   return `/api/extern/sleutels`
 }
 
@@ -649,6 +769,9 @@ export const listLeesSleutels = async ( options?: Parameters<typeof customFetch>
 );}
 
 
+
+
+
 export const getListLeesSleutelsQueryKey = () => {
     return [
     `/api/extern/sleutels`
@@ -664,7 +787,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getListLeesSleutelsQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listLeesSleutels>>> = ({ signal }) => listLeesSleutels({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLeesSleutels>>, TError, TData> & { queryKey: QueryKey }
@@ -691,7 +818,14 @@ export function useListLeesSleutels<TData = Awaited<ReturnType<typeof listLeesSl
 }
 
 
+
+
+
+
+
 export const getCreateLeesSleutelUrl = () => {
+
+
 
 
   return `/api/extern/sleutels`
@@ -712,6 +846,9 @@ export const createLeesSleutel = async (leesSleutelAanmaakVerzoek: LeesSleutelAa
 );}
 
 
+
+
+
 export const getCreateLeesSleutelMutationOptions = <TError = ErrorType<ApiErrorMessage>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLeesSleutel>>, TError,{data: BodyType<LeesSleutelAanmaakVerzoek>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createLeesSleutel>>, TError,{data: BodyType<LeesSleutelAanmaakVerzoek>}, TContext> => {
@@ -724,11 +861,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLeesSleutel>>, {data: BodyType<LeesSleutelAanmaakVerzoek>}> = (props) => {
           const {data} = props ?? {};
 
           return  createLeesSleutel(data,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -754,6 +897,8 @@ export const useCreateLeesSleutel = <TError = ErrorType<ApiErrorMessage>,
 export const getDeleteLeesSleutelUrl = (naam: string,) => {
 
 
+
+
   return `/api/extern/sleutels/${naam}`
 }
 
@@ -772,6 +917,9 @@ export const deleteLeesSleutel = async (naam: string, options?: Parameters<typeo
 );}
 
 
+
+
+
 export const getDeleteLeesSleutelMutationOptions = <TError = ErrorType<ApiErrorMessage>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteLeesSleutel>>, TError,{naam: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteLeesSleutel>>, TError,{naam: string}, TContext> => {
@@ -784,11 +932,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteLeesSleutel>>, {naam: string}> = (props) => {
           const {naam} = props ?? {};
 
           return  deleteLeesSleutel(naam,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -814,6 +968,8 @@ export const useDeleteLeesSleutel = <TError = ErrorType<ApiErrorMessage>,
 export const getGetNotificationSettingsUrl = () => {
 
 
+
+
   return `/api/notifications/settings`
 }
 
@@ -833,6 +989,9 @@ export const getNotificationSettings = async ( options?: Parameters<typeof custo
 );}
 
 
+
+
+
 export const getGetNotificationSettingsQueryKey = () => {
     return [
     `/api/notifications/settings`
@@ -848,7 +1007,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getGetNotificationSettingsQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof getNotificationSettings>>> = ({ signal }) => getNotificationSettings({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getNotificationSettings>>, TError, TData> & { queryKey: QueryKey }
@@ -874,11 +1037,310 @@ export function useGetNotificationSettings<TData = Awaited<ReturnType<typeof get
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+
+
+
+
+
+
 export const getSendTestMailUrl = () => {
+
+
 
 
   return `/api/notifications/test-mail`
 }
+
+/**
+ * Sends a test e-mail from MAIL_FROM to all MAIL_TO addresses so the operator can verify the mail channel end-to-end.
+ * @summary Send a test e-mail via Microsoft Graph
+ */
+export const sendTestMail = async ( options?: Parameters<typeof customFetch>[1]): Promise<PushOk> => {
+
+  return customFetch<PushOk>(getSendTestMailUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getSendTestMailMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTestMail>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendTestMail>>, TError,void, TContext> => {
+
+const mutationKey = ['sendTestMail'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendTestMail>>, void> = () => {
+
+
+          return  sendTestMail(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendTestMailMutationResult = NonNullable<Awaited<ReturnType<typeof sendTestMail>>>
+
+    export type SendTestMailMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Send a test e-mail via Microsoft Graph
+ */
+export const useSendTestMail = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTestMail>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendTestMail>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSendTestMailMutationOptions(options));
+    }
+
+export const getListFindingsUrl = () => {
+
+
+
+
+  return `/api/notifications/findings`
+}
+
+/**
+ * @summary List current and recently resolved findings
+ */
+export const listFindings = async ( options?: Parameters<typeof customFetch>[1]): Promise<Finding[]> => {
+
+  return customFetch<Finding[]>(getListFindingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListFindingsQueryKey = () => {
+    return [
+    `/api/notifications/findings`
+    ] as const;
+    }
+
+
+export const getListFindingsQueryOptions = <TData = Awaited<ReturnType<typeof listFindings>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listFindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListFindingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listFindings>>> = ({ signal }) => listFindings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listFindings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListFindingsQueryResult = NonNullable<Awaited<ReturnType<typeof listFindings>>>
+export type ListFindingsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List current and recently resolved findings
+ */
+
+export function useListFindings<TData = Awaited<ReturnType<typeof listFindings>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listFindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListFindingsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListFindingLevelsUrl = () => {
+
+
+
+
+  return `/api/notifications/levels`
+}
+
+/**
+ * @summary List editable delivery levels by finding kind
+ */
+export const listFindingLevels = async ( options?: Parameters<typeof customFetch>[1]): Promise<FindingLevelSetting[]> => {
+
+  return customFetch<FindingLevelSetting[]>(getListFindingLevelsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListFindingLevelsQueryKey = () => {
+    return [
+    `/api/notifications/levels`
+    ] as const;
+    }
+
+
+export const getListFindingLevelsQueryOptions = <TData = Awaited<ReturnType<typeof listFindingLevels>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listFindingLevels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListFindingLevelsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listFindingLevels>>> = ({ signal }) => listFindingLevels({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listFindingLevels>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListFindingLevelsQueryResult = NonNullable<Awaited<ReturnType<typeof listFindingLevels>>>
+export type ListFindingLevelsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List editable delivery levels by finding kind
+ */
+
+export function useListFindingLevels<TData = Awaited<ReturnType<typeof listFindingLevels>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listFindingLevels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListFindingLevelsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateFindingLevelUrl = (kind: string,) => {
+
+
+
+
+  return `/api/notifications/levels/${kind}`
+}
+
+/**
+ * @summary Change the delivery level for a finding kind
+ */
+export const updateFindingLevel = async (kind: string,
+    findingLevelUpdate: FindingLevelUpdate, options?: Parameters<typeof customFetch>[1]): Promise<FindingLevelSetting> => {
+
+  return customFetch<FindingLevelSetting>(getUpdateFindingLevelUrl(kind),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(findingLevelUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateFindingLevelMutationOptions = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateFindingLevel>>, TError,{kind: string;data: BodyType<FindingLevelUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateFindingLevel>>, TError,{kind: string;data: BodyType<FindingLevelUpdate>}, TContext> => {
+
+const mutationKey = ['updateFindingLevel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateFindingLevel>>, {kind: string;data: BodyType<FindingLevelUpdate>}> = (props) => {
+          const {kind,data} = props ?? {};
+
+          return  updateFindingLevel(kind,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateFindingLevelMutationResult = NonNullable<Awaited<ReturnType<typeof updateFindingLevel>>>
+    export type UpdateFindingLevelMutationBody = BodyType<FindingLevelUpdate>
+    export type UpdateFindingLevelMutationError = ErrorType<ApiErrorMessage>
+
+    /**
+ * @summary Change the delivery level for a finding kind
+ */
+export const useUpdateFindingLevel = <TError = ErrorType<ApiErrorMessage>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateFindingLevel>>, TError,{kind: string;data: BodyType<FindingLevelUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateFindingLevel>>,
+        TError,
+        {kind: string;data: BodyType<FindingLevelUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateFindingLevelMutationOptions(options));
+    }
+
 export const getListExpiryItemsUrl = (params?: ListExpiryItemsParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -910,6 +1372,9 @@ export const listExpiryItems = async (params?: ListExpiryItemsParams, options?: 
 );}
 
 
+
+
+
 export const getListExpiryItemsQueryKey = (params?: ListExpiryItemsParams,) => {
     return [
     `/api/expiry`, ...(params ? [params] : [])
@@ -925,7 +1390,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getListExpiryItemsQueryKey(params);
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listExpiryItems>>> = ({ signal }) => listExpiryItems(params, { signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listExpiryItems>>, TError, TData> & { queryKey: QueryKey }
@@ -952,7 +1421,14 @@ export function useListExpiryItems<TData = Awaited<ReturnType<typeof listExpiryI
 }
 
 
+
+
+
+
+
 export const getListActionLogUrl = () => {
+
+
 
 
   return `/api/actions/log`
@@ -974,6 +1450,9 @@ export const listActionLog = async ( options?: Parameters<typeof customFetch>[1]
 );}
 
 
+
+
+
 export const getListActionLogQueryKey = () => {
     return [
     `/api/actions/log`
@@ -989,7 +1468,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getListActionLogQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listActionLog>>> = ({ signal }) => listActionLog({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listActionLog>>, TError, TData> & { queryKey: QueryKey }
@@ -1016,7 +1499,14 @@ export function useListActionLog<TData = Awaited<ReturnType<typeof listActionLog
 }
 
 
+
+
+
+
+
 export const getListProposalsUrl = () => {
+
+
 
 
   return `/api/actions/proposals`
@@ -1038,6 +1528,9 @@ export const listProposals = async ( options?: Parameters<typeof customFetch>[1]
 );}
 
 
+
+
+
 export const getListProposalsQueryKey = () => {
     return [
     `/api/actions/proposals`
@@ -1053,7 +1546,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
   const queryKey =  queryOptions?.queryKey ?? getListProposalsQueryKey();
 
 
+
     const queryFn: QueryFunction<Awaited<ReturnType<typeof listProposals>>> = ({ signal }) => listProposals({ signal, ...requestOptions });
+
+
+
 
 
    return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listProposals>>, TError, TData> & { queryKey: QueryKey }
@@ -1080,7 +1577,14 @@ export function useListProposals<TData = Awaited<ReturnType<typeof listProposals
 }
 
 
+
+
+
+
+
 export const getExecuteProposalUrl = (id: string,) => {
+
+
 
 
   return `/api/actions/proposals/${id}/execute`
@@ -1101,6 +1605,9 @@ export const executeProposal = async (id: string, options?: Parameters<typeof cu
 );}
 
 
+
+
+
 export const getExecuteProposalMutationOptions = <TError = ErrorType<ApiErrorMessage>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof executeProposal>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof executeProposal>>, TError,{id: string}, TContext> => {
@@ -1113,11 +1620,17 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
+
+
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof executeProposal>>, {id: string}> = (props) => {
           const {id} = props ?? {};
 
           return  executeProposal(id,requestOptions)
         }
+
+
+
+
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -1138,59 +1651,4 @@ export const useExecuteProposal = <TError = ErrorType<ApiErrorMessage>,
         TContext
       > => {
       return useMutation(getExecuteProposalMutationOptions(options));
-    }
-
-
-/**
- * Sends a test e-mail from MAIL_FROM to all MAIL_TO addresses so the operator can verify the mail channel end-to-end.
- * @summary Send a test e-mail via Microsoft Graph
- */
-export const sendTestMail = async ( options?: Parameters<typeof customFetch>[1]): Promise<PushOk> => {
-
-  return customFetch<PushOk>(getSendTestMailUrl(),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-);}
-
-export const getSendTestMailMutationOptions = <TError = ErrorType<ApiErrorMessage>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTestMail>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof sendTestMail>>, TError,void, TContext> => {
-
-const mutationKey = ['sendTestMail'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendTestMail>>, void> = () => {
-
-
-          return  sendTestMail(requestOptions)
-        }
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SendTestMailMutationResult = NonNullable<Awaited<ReturnType<typeof sendTestMail>>>
-
-    export type SendTestMailMutationError = ErrorType<ApiErrorMessage>
-
-    /**
- * @summary Send a test e-mail via Microsoft Graph
- */
-export const useSendTestMail = <TError = ErrorType<ApiErrorMessage>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendTestMail>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof sendTestMail>>,
-        TError,
-        void,
-        TContext
-      > => {
-      return useMutation(getSendTestMailMutationOptions(options));
     }

@@ -317,6 +317,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorMessage"
+  /notifications/findings:
+    get:
+      operationId: listFindings
+      tags: [notifications]
+      summary: List current and recently resolved findings
+      responses:
+        "200":
+          description: Findings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Finding"
+  /notifications/levels:
+    get:
+      operationId: listFindingLevels
+      tags: [notifications]
+      summary: List editable delivery levels by finding kind
+      responses:
+        "200":
+          description: Finding levels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FindingLevelSetting"
+  /notifications/levels/{kind}:
+    patch:
+      operationId: updateFindingLevel
+      tags: [notifications]
+      summary: Change the delivery level for a finding kind
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingLevelUpdate"
+      responses:
+        "200":
+          description: Updated level
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingLevelSetting"
+        "404":
+          description: Unknown finding kind
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
   /expiry:
     get:
       operationId: listExpiryItems
@@ -712,3 +770,44 @@ components:
         updatedAt:
           type: ["string", "null"]
           format: date-time
+    Finding:
+      type: object
+      required: [id, kind, subject, title, detail, level, openedAt, resolvedAt, autoResolved]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        subject:
+          type: string
+        title:
+          type: string
+        detail:
+          type: string
+        level:
+          type: string
+          enum: [NU, KAN_WACHTEN]
+        openedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: ["string", "null"]
+          format: date-time
+        autoResolved:
+          type: boolean
+    FindingLevelSetting:
+      type: object
+      required: [kind, level]
+      properties:
+        kind:
+          type: string
+        level:
+          type: string
+          enum: [NU, KAN_WACHTEN]
+    FindingLevelUpdate:
+      type: object
+      required: [level]
+      properties:
+        level:
+          type: string
+          enum: [NU, KAN_WACHTEN]

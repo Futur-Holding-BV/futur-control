@@ -164,6 +164,55 @@ export async function ensureTablesExist(): Promise<void> {
         blocked_until TIMESTAMPTZ
       )
     `);
+
+    // ── findings and delivery policy ─────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS finding_levels (
+        kind TEXT PRIMARY KEY,
+        level TEXT NOT NULL CHECK (level IN ('NU', 'KAN_WACHTEN')),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS findings (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        title TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        level TEXT NOT NULL CHECK (level IN ('NU', 'KAN_WACHTEN')),
+        opened_at TIMESTAMPTZ NOT NULL,
+        resolved_at TIMESTAMPTZ,
+        auto_resolved BOOLEAN NOT NULL DEFAULT false,
+        immediate_sent_at TIMESTAMPTZ,
+        daily_sent_on TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS findings_open_level_idx
+        ON findings (level, opened_at) WHERE resolved_at IS NULL
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS monitor_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      INSERT INTO finding_levels (kind, level) VALUES
+        ('public_service_unavailable', 'NU'),
+        ('certificate_invalid', 'NU'),
+        ('monitor_unhealthy', 'NU'),
+        ('credential_expired', 'NU'),
+        ('database_unavailable', 'NU'),
+        ('build_failed', 'KAN_WACHTEN'),
+        ('anomaly', 'KAN_WACHTEN'),
+        ('domain_expiry', 'KAN_WACHTEN'),
+        ('repo_without_check', 'KAN_WACHTEN')
+      ON CONFLICT (kind) DO NOTHING
+    `);
   } finally {
     client.release();
   }

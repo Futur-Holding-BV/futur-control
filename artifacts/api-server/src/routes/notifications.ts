@@ -1,6 +1,18 @@
 import { Router, type IRouter } from "express";
 import { isMailConfigured, sendMailDirect } from "../lib/mail.js";
 import { logger } from "../lib/logger.js";
+import {
+  ListFindingsResponse,
+  ListFindingLevelsResponse,
+  UpdateFindingLevelBody,
+  UpdateFindingLevelParams,
+  UpdateFindingLevelResponse,
+} from "@workspace/api-zod";
+import {
+  listFindings,
+  listFindingLevels,
+  updateFindingLevel,
+} from "../lib/findings.js";
 
 const router: IRouter = Router();
 
@@ -20,6 +32,44 @@ router.get("/notifications/settings", (_req, res): void => {
     slackWebhookConfigured: Boolean(process.env["SLACK_WEBHOOK_URL"]),
     mailConfigured: isMailConfigured(),
   });
+});
+
+router.get("/notifications/findings", async (req, res): Promise<void> => {
+  try {
+    res.json(ListFindingsResponse.parse(await listFindings()));
+  } catch (err) {
+    req.log.error({ err }, "Bevindingen ophalen mislukt");
+    res.status(502).json({ error: "Kon de bevindingen niet ophalen." });
+  }
+});
+
+router.get("/notifications/levels", async (req, res): Promise<void> => {
+  try {
+    res.json(ListFindingLevelsResponse.parse(await listFindingLevels()));
+  } catch (err) {
+    req.log.error({ err }, "Meldingsniveaus ophalen mislukt");
+    res.status(502).json({ error: "Kon de meldingsniveaus niet ophalen." });
+  }
+});
+
+router.patch("/notifications/levels/:kind", async (req, res): Promise<void> => {
+  const params = UpdateFindingLevelParams.safeParse(req.params);
+  const body = UpdateFindingLevelBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    res.status(400).json({ error: "Ongeldig meldingsniveau." });
+    return;
+  }
+  try {
+    const updated = await updateFindingLevel(params.data.kind, body.data.level);
+    if (!updated) {
+      res.status(404).json({ error: "Onbekende bevindingssoort." });
+      return;
+    }
+    res.json(UpdateFindingLevelResponse.parse(updated));
+  } catch (err) {
+    req.log.error({ err, kind: params.data.kind }, "Meldingsniveau aanpassen mislukt");
+    res.status(502).json({ error: "Kon het meldingsniveau niet aanpassen." });
+  }
 });
 
 /**

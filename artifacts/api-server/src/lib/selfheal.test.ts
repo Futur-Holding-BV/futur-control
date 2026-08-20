@@ -323,7 +323,7 @@ describe("maybeAutoRetry — safe transient failure triggers rerun", () => {
     mockFailedRunErrorLines.mockResolvedValue(["ECONNRESET: socket hang up"]);
     mockFailedJobNames.mockResolvedValue(["build"]);
     mockLogAction.mockResolvedValue(42);
-    mockRerunFailedJobs.mockResolvedValue({ ok: true, message: "" });
+    mockRerunFailedJobs.mockResolvedValue({ ok: true, message: "Herhaling gestart" });
     mockUpdateOutcome.mockResolvedValue(undefined as any);
 
     const result = await maybeAutoRetry(repo);

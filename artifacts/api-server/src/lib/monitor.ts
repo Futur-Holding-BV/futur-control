@@ -29,18 +29,19 @@
 import { pool, db, repoStatusSnapshots } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { listMonitoredRepos, repoSummary, type Status, type Anomaly, type RepoSummary } from "./github.js";
-import {
-  notifyRepoRed,
-  notifyMultipleReposRed,
-  notifyRepoRedReminder,
-  notifyMultipleReposRedReminder,
-  notifyAnomaly,
-} from "./notifications.js";
 import { maybeAutoRetry, settleRecovery } from "./selfheal.js";
 import { retryMailOutbox } from "./mail.js";
 import { logAction } from "./actionlog.js";
 import { isQuietTime, MIN_PROBLEM_AGE_MS } from "./quiet.js";
 import { logger } from "./logger.js";
+import {
+  checkPublicServices,
+  openFinding,
+  resolveFinding,
+  runFindingDelivery,
+  syncExpiryFindings,
+} from "./findings.js";
+import { recordSuccessfulMonitorRound } from "./watchdog.js";
 
 /**
  * A "problem" is a red status (failed check or stale code) OR an unknown
@@ -271,7 +272,7 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
     now.getTime() - problemSince.getTime() >= MIN_PROBLEM_AGE_MS;
 
   let isNewRed =
-    problematic && !isProblem(notifiedStatus) && persistedLongEnough && !quiet;
+    problematic && !isProblem(notifiedStatus) && persistedLongEnough;
 
   // Self-heal runs on a fresh red immediately (independent of debounce or
   // quiet hours — a rerun is not a notification and may fix the problem
@@ -297,7 +298,6 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
   // the quiet window (it goes out on the first allowed poll).
   const isReminderDue =
     !isNewRed &&
-    !quiet &&
     problematic &&
     isProblem(notifiedStatus) &&
     lastRedNotifiedAt !== null &&
@@ -314,7 +314,7 @@ export async function gatherRepoData(repoName: string): Promise<RepoCheckData | 
   // un-notified (sha not advanced) so it goes out on the first allowed poll.
   const anomaly = summary.anomaly ?? null;
   const newAnomaly =
-    !quiet && anomaly && anomaly.commitSha !== notifiedAnomalySha
+    anomaly && anomaly.commitSha !== notifiedAnomalySha
       ? anomaly
       : null;
   if (newAnomaly) {
@@ -393,27 +393,24 @@ export async function checkRepo(repoName: string): Promise<void> {
     await logSuppressedResolution(data.repoName, data.suppressedResolution);
   }
 
-  if (isNewRed) {
-    const delivered = await notifyRepoRed(summary);
-    if (delivered) {
-      newNotifiedStatus = summary.status;
-      newLastRedNotifiedAt = new Date();
-    }
-  } else if (isReminderDue) {
-    const redSinceMs = lastRedNotifiedAt
-      ? Date.now() - lastRedNotifiedAt.getTime()
-      : REMINDER_INTERVAL_MS;
-    const delivered = await notifyRepoRedReminder(summary, redSinceMs);
-    if (delivered) {
-      // Reset the timer so the next reminder fires REMINDER_INTERVAL_MS later.
-      newLastRedNotifiedAt = new Date();
-    }
+  if (isNewRed || isReminderDue) {
+    const kind = summary.status === "gray" ? "repo_without_check" : "build_failed";
+    await openFinding({
+      id: `build:${data.repoName}`,
+      kind,
+      subject: data.repoName,
+      title: `Bouwcontrole ${data.repoName} faalt`,
+      detail: summary.failReason ?? "De controle levert geen werkende status op.",
+    });
+    newNotifiedStatus = summary.status;
+    newLastRedNotifiedAt = new Date();
   } else if (!isProblem(summary.status) && isProblem(notifiedStatus)) {
     // Recovery: green or yellow after a notified problem — reset so the
     // next problem cycle alerts again. Yellow (stale but not critical)
     // counts as recovered; gray does not (unknown is itself a problem).
     newNotifiedStatus = summary.status;
     newLastRedNotifiedAt = null;
+    await resolveFinding(`build:${data.repoName}`);
   }
 
   if (summary.status === "green") {
@@ -422,10 +419,14 @@ export async function checkRepo(repoName: string): Promise<void> {
 
   let newNotifiedAnomalySha = notifiedAnomalySha;
   if (newAnomaly) {
-    const delivered = await notifyAnomaly(repoName, newAnomaly, summary.htmlUrl);
-    if (delivered) {
-      newNotifiedAnomalySha = newAnomaly.commitSha;
-    }
+    await openFinding({
+      id: `anomaly:${repoName}:${newAnomaly.commitSha}`,
+      kind: "anomaly",
+      subject: repoName,
+      title: `Afwijkend grote wijziging in ${repoName}`,
+      detail: `${newAnomaly.fileName}: ${newAnomaly.linesChanged} regels gewijzigd — ${newAnomaly.commitTitle}`,
+    });
+    newNotifiedAnomalySha = newAnomaly.commitSha;
   }
 
   await saveSnapshot(
@@ -468,52 +469,7 @@ export async function pollAll(): Promise<void> {
       if (data) results.push(data);
     }
 
-    // 2. Decide how to notify for red transitions.
-    //    ≥2 new red repos → one bundled summary message.
-    //    1 new red repo  → individual message (existing behaviour).
-    const newRedRepos = results.filter((r) => r.isNewRed);
-
-    // Track which repos had their red notification successfully delivered.
-    const redDelivered = new Set<string>();
-
-    if (newRedRepos.length >= 2) {
-      const summaries = newRedRepos.map((r) => r.summary);
-      const delivered = await notifyMultipleReposRed(summaries);
-      if (delivered) {
-        for (const r of newRedRepos) redDelivered.add(r.repoName);
-      }
-    } else if (newRedRepos.length === 1) {
-      const r = newRedRepos[0]!;
-      const delivered = await notifyRepoRed(r.summary);
-      if (delivered) redDelivered.add(r.repoName);
-    }
-
-    // 3. Send reminder notifications for repos that have stayed red too long.
-    //    Same bundling logic: ≥2 → one message, 1 → individual.
-    const reminderRepos = results.filter((r) => r.isReminderDue);
-    const reminderDelivered = new Set<string>();
-
-    if (reminderRepos.length >= 2) {
-      const entries = reminderRepos.map((r) => ({
-        summary: r.summary,
-        redSinceMs: r.lastRedNotifiedAt
-          ? Date.now() - r.lastRedNotifiedAt.getTime()
-          : REMINDER_INTERVAL_MS,
-      }));
-      const delivered = await notifyMultipleReposRedReminder(entries);
-      if (delivered) {
-        for (const r of reminderRepos) reminderDelivered.add(r.repoName);
-      }
-    } else if (reminderRepos.length === 1) {
-      const r = reminderRepos[0]!;
-      const redSinceMs = r.lastRedNotifiedAt
-        ? Date.now() - r.lastRedNotifiedAt.getTime()
-        : REMINDER_INTERVAL_MS;
-      const delivered = await notifyRepoRedReminder(r.summary, redSinceMs);
-      if (delivered) reminderDelivered.add(r.repoName);
-    }
-
-    // 4. Send anomaly notifications, settle recoveries, and persist snapshots.
+    // 2. Convert repository observations into open/resolved findings.
     for (const data of results) {
       const {
         repoName,
@@ -531,17 +487,21 @@ export async function pollAll(): Promise<void> {
         await logSuppressedResolution(repoName, data.suppressedResolution);
       }
 
-      if (data.isNewRed && redDelivered.has(repoName)) {
+      if (data.isNewRed || data.isReminderDue) {
+        const kind = summary.status === "gray" ? "repo_without_check" : "build_failed";
+        await openFinding({
+          id: `build:${repoName}`, kind, subject: repoName,
+          title: `Bouwcontrole ${repoName} faalt`,
+          detail: summary.failReason ?? "De controle levert geen werkende status op.",
+        });
         newNotifiedStatus = summary.status;
-        newLastRedNotifiedAt = new Date();
-      } else if (reminderDelivered.has(repoName)) {
-        // Reset timer so the next reminder fires REMINDER_INTERVAL_MS later.
         newLastRedNotifiedAt = new Date();
       } else if (!isProblem(summary.status) && isProblem(notifiedStatus)) {
         // Confirmed recovery: green or yellow after a notified problem —
         // reset so the next problem cycle alerts again.
         newNotifiedStatus = summary.status;
         newLastRedNotifiedAt = null;
+        await resolveFinding(`build:${repoName}`);
       }
 
       // Settle a pending automatic retry: when the repo is green thanks to a
@@ -550,13 +510,14 @@ export async function pollAll(): Promise<void> {
         await settleRecovery(repoName);
       }
 
-      // Anomaly notification (always per-repo).
       let newNotifiedAnomalySha = notifiedAnomalySha;
       if (data.newAnomaly) {
-        const delivered = await notifyAnomaly(repoName, data.newAnomaly, summary.htmlUrl);
-        if (delivered) {
-          newNotifiedAnomalySha = data.newAnomaly.commitSha;
-        }
+        await openFinding({
+          id: `anomaly:${repoName}:${data.newAnomaly.commitSha}`, kind: "anomaly", subject: repoName,
+          title: `Afwijkend grote wijziging in ${repoName}`,
+          detail: `${data.newAnomaly.fileName}: ${data.newAnomaly.linesChanged} regels gewijzigd — ${data.newAnomaly.commitTitle}`,
+        });
+        newNotifiedAnomalySha = data.newAnomaly.commitSha;
       }
 
       await saveSnapshot(
@@ -568,6 +529,9 @@ export async function pollAll(): Promise<void> {
         data.problemSince,
       );
     }
+    await Promise.all([checkPublicServices(), syncExpiryFindings()]);
+    await runFindingDelivery();
+    await recordSuccessfulMonitorRound();
 
     logger.debug("Monitor: controle afgerond");
   } catch (err) {

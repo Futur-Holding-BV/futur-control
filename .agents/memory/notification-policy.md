@@ -1,13 +1,16 @@
 ---
 name: Notification policy invariants
-description: Debounce/quiet-window rules the monitor must keep honoring
+description: Finding levels, delivery timing, and anti-duplicate rules the monitor must keep honoring
 ---
 
-- Slack notifications only after a problem (red OR gray) persists ≥10 min; blips go to the action log (`melding_onderdrukt`), never Slack.
-- Quiet window Europe/Amsterdam: 22:00–07:15 Mon–Fri, 22:00–09:00 Sat–Sun; deferred problems go out on the first allowed poll (existing bundling covers the summary message).
-- `notified_status` semantics changed: `gray` in stored rows = already-notified problem; missing row defaults to `none`. Never reintroduce `gray` as the "never notified" default.
-- **Why:** operators demanded no night-time pings and no alerts for sub-10-min hiccups; gray counts as a problem, not rest.
-- **How to apply:** any monitor test that decides whether to notify MUST fake the system time (real clock makes tests fail at night/weekend mornings).
+- All user-facing monitor events first become persistent findings. Their database-configured level decides delivery across mail, Slack, and push: `NU` is immediate; `KAN_WACHTEN` appears only in the weekday 17:00 report.
+- Quiet window Europe/Amsterdam: 22:00–07:15 Mon–Fri, 22:00–09:00 Sat–Sun. Deferred open `NU` findings go out at the first allowed check.
+- Automatically or naturally resolved findings remain visible/logged but are never delivered. Reopening starts a new delivery cycle.
+- Public-service unavailability becomes a finding only after three failed measurements spanning at least ten minutes.
+- Immediate delivery needs a dedicated cross-instance claim/lock because the independent heartbeat watchdog and the normal monitor can both attempt delivery.
+- `notified_status` remains repo-monitor bookkeeping: `gray` means an already-recorded problem; missing rows default to `none`.
+- **Why:** users should receive only actionable alerts, with no night-time pings, transient-service noise, recovered-incident mail, or multi-instance duplicates.
+- **How to apply:** centralize new alert types in the findings policy, and fake Amsterdam-aware clock times in all delivery tests.
 
 ## Mail channel (Microsoft Graph)
 Delivered-state OR-semantics: slack || push || mail. A mail that fails to send but is

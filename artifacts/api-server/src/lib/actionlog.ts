@@ -13,7 +13,8 @@ export interface LogActionInput {
     | "manual_rerun"
     | "melding_onderdrukt"
     | "extern_lezen"
-    | "mail_mislukt";
+    | "mail_mislukt"
+    | "bevinding_opgelost";
 
   action: string;
 

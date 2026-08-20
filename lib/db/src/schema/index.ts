@@ -6,3 +6,4 @@ export * from "./repoSettings";
 export * from "./pushSubscriptions";
 export * from "./apiKeys";
 export * from "./mailOutbox";
+export * from "./findings";

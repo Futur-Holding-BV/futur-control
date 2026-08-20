@@ -7,6 +7,7 @@ import { logger } from "./lib/logger";
 import { startMonitor } from "./lib/monitor";
 import { ensureTablesExist } from "@workspace/db";
 import { cleanupExpiredLoginAttempts } from "./lib/auth";
+import { startWatchdog } from "./lib/watchdog";
 
 const app: Express = express();
 
@@ -33,6 +34,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+// Starts independently of database migration so a DB outage can still be
+// reported directly through Graph mail.
+startWatchdog();
 
 // Run idempotent startup migration then start the background monitor.
 // Both steps are non-blocking so the HTTP server comes up immediately.
