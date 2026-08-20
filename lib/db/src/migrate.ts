@@ -95,6 +95,60 @@ export async function ensureTablesExist(): Promise<void> {
         blocked_until TIMESTAMPTZ
       )
     `);
+
+    // ── sentry_router_issues ────────────────────────────────────────────────
+    // Het beheercentrum bewaart alleen minimale routeringsmetadata. Twee
+    // voorkomens zijn vereist voordat een fout meldbaar wordt; een Sentry
+    // issue-resolve onderdrukt het signaal zolang er geen nieuwe regressie is.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sentry_router_issues (
+        issue_key          TEXT PRIMARY KEY,
+        project            TEXT NOT NULL,
+        component          TEXT NOT NULL DEFAULT 'onbekend',
+        handeling          TEXT,
+        omgeving           TEXT,
+        release            TEXT,
+        verwijzingscode    TEXT,
+        routing_bewijs     TEXT,
+        issue_url          TEXT,
+        aantal             INTEGER NOT NULL DEFAULT 1,
+        eerste_gezien_op   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        laatste_gezien_op  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        opgelost_op        TIMESTAMPTZ,
+        gemeld_op          TIMESTAMPTZ,
+        meld_claim_token   TEXT,
+        meld_claim_op      TIMESTAMPTZ
+      )
+    `);
+
+    await client.query(`
+      ALTER TABLE sentry_router_issues
+        ADD COLUMN IF NOT EXISTS verwijzingscode TEXT,
+        ADD COLUMN IF NOT EXISTS routing_bewijs TEXT,
+        ADD COLUMN IF NOT EXISTS meld_claim_token TEXT,
+        ADD COLUMN IF NOT EXISTS meld_claim_op TIMESTAMPTZ
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS sentry_router_open_idx
+        ON sentry_router_issues (laatste_gezien_op)
+        WHERE opgelost_op IS NULL AND gemeld_op IS NULL
+    `);
+
+    // Sentry levert webhooks at-least-once. De event-id is daarom de duurzame
+    // idempotentiesleutel: een retry mag nooit als tweede voorkomen tellen.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sentry_router_events (
+        event_key    TEXT PRIMARY KEY,
+        issue_key    TEXT NOT NULL,
+        ontvangen_op TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS sentry_router_events_ontvangen_idx
+        ON sentry_router_events (ontvangen_op)
+    `);
   } finally {
     client.release();
   }
