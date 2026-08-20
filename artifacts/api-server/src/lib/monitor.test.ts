@@ -170,6 +170,8 @@ function savedSnapshot(callIndex = 0): Record<string, unknown> {
 
 describe("pollAll — anomaly notification", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-17T10:00:00Z")); // Monday 12:00 Amsterdam
     vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
     vi.mocked(maybeAutoRetry).mockResolvedValue(false);
     vi.mocked(notifyRepoRed).mockResolvedValue(true);
@@ -177,6 +179,7 @@ describe("pollAll — anomaly notification", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.resetAllMocks();
   });
 

@@ -323,7 +323,7 @@ describe("maybeAutoRetry — safe transient failure triggers rerun", () => {
     mockFailedRunErrorLines.mockResolvedValue(["ECONNRESET: socket hang up"]);
     mockFailedJobNames.mockResolvedValue(["build"]);
     mockLogAction.mockResolvedValue(42);
-    mockRerunFailedJobs.mockResolvedValue({ ok: true });
+    mockRerunFailedJobs.mockResolvedValue({ ok: true, message: "" });
     mockUpdateOutcome.mockResolvedValue(undefined as any);
 
     const result = await maybeAutoRetry(repo);
@@ -331,5 +331,35 @@ describe("maybeAutoRetry — safe transient failure triggers rerun", () => {
     expect(result).toBe(true);
     expect(mockRerunFailedJobs).toHaveBeenCalledTimes(1);
     expect(mockRerunFailedJobs).toHaveBeenCalledWith(repo, 200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// maybeAutoRetry — timed-out runs
+// ---------------------------------------------------------------------------
+
+describe("maybeAutoRetry — timed-out safe job triggers rerun", () => {
+  const repo = "fps-api";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns true and calls rerunFailedJobs once when a safe job times out and no prior retry exists", async () => {
+    mockLatestRuns.mockResolvedValue([
+      { id: 201, status: "completed", conclusion: "timed_out", name: "CI", run_attempt: 1 },
+    ] as any);
+    mockFindAutoRetry.mockResolvedValue(null);
+    mockFailedRunErrorLines.mockResolvedValue([]);
+    mockFailedJobNames.mockResolvedValue(["test"]);
+    mockLogAction.mockResolvedValue(43);
+    mockRerunFailedJobs.mockResolvedValue({ ok: true, message: "" });
+    mockUpdateOutcome.mockResolvedValue(undefined as any);
+
+    const result = await maybeAutoRetry(repo);
+
+    expect(result).toBe(true);
+    expect(mockRerunFailedJobs).toHaveBeenCalledTimes(1);
+    expect(mockRerunFailedJobs).toHaveBeenCalledWith(repo, 201);
   });
 });
