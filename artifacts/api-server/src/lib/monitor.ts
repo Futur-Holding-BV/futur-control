@@ -28,7 +28,13 @@
 
 import { pool, db, repoStatusSnapshots } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
-import { listMonitoredRepos, repoSummary, type Status, type Anomaly, type RepoSummary } from "./github.js";
+import {
+  getMonitoredRepoSelection,
+  repoSummary,
+  type Status,
+  type Anomaly,
+  type RepoSummary,
+} from "./github.js";
 import { maybeAutoRetry, settleRecovery } from "./selfheal.js";
 import { retryMailOutbox } from "./mail.js";
 import { logAction } from "./actionlog.js";
@@ -43,6 +49,7 @@ import {
 } from "./findings.js";
 import { MONITOR_POLL_LOCK_KEY } from "./monitorLock.js";
 import { recordSuccessfulMonitorRound } from "./watchdog.js";
+import { syncConnectFindings } from "./connectStatus.js";
 
 /**
  * A "problem" is a red status (failed check or stale code) OR an unknown
@@ -470,7 +477,20 @@ export async function pollAll(): Promise<void> {
     }
 
     // 1. Gather data for all repos (no Slack calls yet).
-    const monitoredRepos = await listMonitoredRepos();
+    const repoSelection = await getMonitoredRepoSelection();
+    if (repoSelection.overrideActive && repoSelection.omittedByOverride.length > 0) {
+      const omitted = repoSelection.omittedByOverride;
+      await openFinding({
+        id: "org:repository-coverage-limited",
+        kind: "repo_coverage_limited",
+        subject: process.env["GITHUB_ORG"] ?? "GitHub-organisatie",
+        title: "Repositorybewaking wordt beperkt door een override",
+        detail: `MONITORED_REPOS sluit ${omitted.length} organisatierepositor${omitted.length === 1 ? "y" : "ies"} uit: ${omitted.slice(0, 10).join(", ")}${omitted.length > 10 ? ", …" : ""}. Verwijder de override voor volledige automatische dekking.`,
+      });
+    } else {
+      await resolveFinding("org:repository-coverage-limited");
+    }
+    const monitoredRepos = repoSelection.repos;
     const results: RepoCheckData[] = [];
     for (const repo of monitoredRepos) {
       const data = await gatherRepoData(repo);
@@ -537,7 +557,17 @@ export async function pollAll(): Promise<void> {
         data.problemSince,
       );
     }
-    await Promise.all([checkPublicServices(), syncExpiryFindings()]);
+    const connectData = results.find(
+      (data) => data.repoName.toLowerCase() === "fps-connect",
+    );
+    await Promise.all([
+      checkPublicServices(),
+      syncExpiryFindings(),
+      syncConnectFindings({
+        repoStatus: connectData?.summary.status ?? null,
+        problemSinceMs: connectData?.problemSince?.getTime() ?? null,
+      }),
+    ]);
     await runFindingDelivery();
     await recordSuccessfulMonitorRound();
 

@@ -10,6 +10,7 @@ Alleen-lezen beheerscherm dat de status van de FPS GitHub-codebases toont: laats
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- Iedere afgeronde taak wordt zonder force-push naar de hoofdtak van de passende `Futur-Holding-BV`-repository gepusht. Controleer vóór de push altijd eerst of remote `main` intussen is gewijzigd.
 
 ## Stack
 
@@ -30,10 +31,13 @@ Alleen-lezen beheerscherm dat de status van de FPS GitHub-codebases toont: laats
 
 ## Architecture decisions
 
-- Read-only richting de codebases: alleen GET-verzoeken naar de GitHub API. Eén bewuste uitzondering: het opnieuw starten van een bestaande Actions-run (`rerun-failed-jobs`) — automatisch (max. 1x, alleen bij tijdelijke haperingen) of via een expliciet goedgekeurd voorstel. Nooit: code wijzigen, database aanpassen, productie herstarten of deployen.
-- Bewaakte repos: env `MONITORED_REPOS` (kommagescheiden) of anders automatisch alle repos van de org; org uit `GITHUB_ORG`, auth uit `GITHUB_TOKEN` (Secrets).
+- Read-only richting de codebases: alleen GET-verzoeken naar de GitHub API. Veilige uitzonderingen zijn maximaal drie pogingen om een bestaande mislukte Actions-run te herhalen en, alleen via een vooraf gecontroleerde immutable Release-workflow `herstart`, een expliciet gekoppelde dienst te herstarten. Nooit automatisch: code wijzigen, database wijzigen of herstellen, terugrollen, instellingen/geheimen/rechten/firewalls aanpassen of een willekeurige uitrol starten.
+- Bewaakte repos: standaard automatisch alle (ook later toegevoegde) repos van `GITHUB_ORG`, met auth uit `GITHUB_TOKEN` (Secrets). Een beperkende `MONITORED_REPOS`-override blijft mogelijk, maar opent zichtbaar een bevinding voor iedere uitgesloten organisatierepository.
+- De operationele Connect-koppeling gebruikt uitsluitend het minimale HTTPS-adres uit `CONNECT_STATUS_URL`; de GitHub-repository is standaard `FPS-Connect` en kan expliciet met `CONNECT_GITHUB_REPO` worden ingesteld.
 - "Loopt af"-blok (`lib/expiry.ts`): GitHub-tokenexpiry via de `github-authentication-token-expiration` responseheader; TLS via directe socket (env `EXPIRY_TLS_HOSTS`); domeinverlenging via publieke RDAP (env `EXPIRY_DOMAINS`); Azure-clientsleutel via Microsoft Graph (env `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`). Onleesbaar = severity "unknown" met reden, nooit ok.
-- Zelfherstel (`lib/selfheal.ts`): rode run met tijdelijk ogende fout (netwerk/timeout/limiet) → één automatische rerun; melding wordt vastgehouden tot de herhaling klaar is; alles gelogd in `action_log`. Groen na herhaling = badge "hersteld na herhaling".
+- Zelfherstel (`lib/selfheal.ts`): een tijdelijke bouw- of dienststoring krijgt maximaal drie duurzaam geclaimde veilige pogingen; meldingen worden vastgehouden zolang veilig herstel nog loopt en volgen pas na uitputting of een verboden/onveilige uitkomst. Alles staat in `action_log`.
+- Achtergrondmonitor, dagberichtklok, watchdog en andere meldtimers starten uitsluitend met `NODE_ENV=production`; preview- en taakomgevingen mogen nooit operationele meldingen versturen.
+- Rond 17:00 Amsterdam gaat op iedere werkdag exact één dagbericht uit, ook zonder problemen, met open punten, zelf opgelost werk, verloop binnen 30 dagen en de vijf Connect-controles.
 - Voorstellen (`lib/proposals.ts`): stateless berekend, id codeert repo+runId zodat verouderde knoppen een 404 geven; uitvoeren alleen via POST na gebruikersklik.
 - Status komt van GitHub Actions workflow runs: success→groen, failure/timed_out→rood, geen runs of lopend→grijs.
 - Faalreden wordt vertaald naar gewone taal via naam van de gefaalde job/stap (typecheck/tests/lint/build/...).

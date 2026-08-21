@@ -232,7 +232,10 @@ describe("three-attempt build recovery", () => {
     );
     expect(rerunFailedJobs).toHaveBeenCalledWith("fps-api", 200);
     expect(logAction).toHaveBeenCalledWith(
-      expect.objectContaining({ action: expect.stringContaining("poging 1/3") }),
+      expect.objectContaining({
+        action: expect.stringContaining("poging 1/3"),
+        runId: "200:attempt:1",
+      }),
     );
     expect(markSelfHealRunning).toHaveBeenCalledWith(
       expect.objectContaining({ observedRunAttempt: 1, actionLogId: 41 }),
@@ -301,7 +304,10 @@ describe("three-attempt build recovery", () => {
     await maybeAutoRetry("fps-api", new Date("2026-08-20T10:05:00.000Z"));
 
     expect(logAction).toHaveBeenCalledWith(
-      expect.objectContaining({ action: expect.stringContaining("poging 2/3") }),
+      expect.objectContaining({
+        action: expect.stringContaining("poging 2/3"),
+        runId: "200:attempt:2",
+      }),
     );
     expect(rerunFailedJobs).toHaveBeenCalledOnce();
   });

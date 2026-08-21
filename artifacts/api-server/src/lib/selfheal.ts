@@ -175,7 +175,7 @@ async function executeBuildAttempt(input: {
     kind: "auto_retry",
     action: `Mislukte controle automatisch opnieuw gestart voor ${input.repo} (poging ${attempt}/3)`,
     repo: input.repo,
-    runId: String(input.runId),
+    runId: `${input.runId}:attempt:${attempt}`,
     reason: input.reason,
     outcome: `poging ${attempt}/3 wordt gestart`,
   });

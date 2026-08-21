@@ -88,21 +88,62 @@ export interface DailyReportDelivery {
   confirmed: boolean;
 }
 
+export interface DailyFinding {
+  title: string;
+  detail: string;
+  kind?: string;
+}
+
+export interface DailyOperationalCheck {
+  id: string;
+  label: string;
+  status: "ok" | "warning" | "error" | "unknown";
+  detail: string;
+}
+
 export async function notifyDailyFindings(
-  findings: Array<{ title: string; detail: string }>,
+  findings: DailyFinding[],
   actions: Array<{ action: string; repo: string | null; outcome: string }> = [],
   day: string,
+  operationalChecks: DailyOperationalCheck[] = [],
 ): Promise<DailyReportDelivery> {
   if (!isEnabled()) return { handled: false, confirmed: false };
-  const findingBody = findings.length > 0
-    ? findings.map((finding) => `• ${finding.title}\n  ${finding.detail}`).join("\n\n")
-    : "De bewaking draait. Er staan vandaag geen open aandachtspunten.";
+  const expiryFindings = findings.filter(
+    (finding) => finding.kind === "domain_expiry",
+  );
+  const openFindings = findings.filter(
+    (finding) => finding.kind !== "domain_expiry",
+  );
+  const findingBody = openFindings.length > 0
+    ? `Open punten:\n${openFindings
+        .map((finding) => `• ${finding.title}\n  ${finding.detail}`)
+        .join("\n\n")}`
+    : "Open punten:\n• Geen open aandachtspunten.";
   const actionBody = actions.length > 0
-    ? `\n\nWat het systeem op mijn servers heeft gedaan:\n${actions
+    ? `\n\nZelf opgelost werk:\n${actions
         .map((action) => `• ${action.action}${action.repo ? ` (${action.repo})` : ""}: ${action.outcome}`)
         .join("\n")}`
-    : "";
-  const body = `${findingBody}${actionBody}`;
+    : "\n\nZelf opgelost werk:\n• Geen automatische herstelacties sinds het vorige dagbericht.";
+  const expiryBody = expiryFindings.length > 0
+    ? `\n\nVerloop binnen 30 dagen:\n${expiryFindings
+        .map((finding) => `• ${finding.title}: ${finding.detail}`)
+        .join("\n")}`
+    : "\n\nVerloop binnen 30 dagen:\n• Geen bekende vervaldatums binnen 30 dagen.";
+  const statusIcon: Record<DailyOperationalCheck["status"], string> = {
+    ok: "OK",
+    warning: "LET OP",
+    error: "FOUT",
+    unknown: "ONBEKEND",
+  };
+  const operationalBody = operationalChecks.length > 0
+    ? `\n\nVijf operationele controles:\n${operationalChecks
+        .map(
+          (check) =>
+            `• ${statusIcon[check.status]} — ${check.label}: ${check.detail}`,
+        )
+        .join("\n")}`
+    : "\n\nVijf operationele controles:\n• ONBEKEND — Er zijn nog geen metingen beschikbaar.";
+  const body = `${findingBody}${actionBody}${expiryBody}${operationalBody}`;
   const title = `Dagbericht ${day}: bewaking draait`;
   const subject = `📋 ${title}`;
   const webhookUrl = resolveWebhookUrl();
@@ -202,16 +243,10 @@ async function post(
   }
 }
 
-export interface SentryMelding {
-  issueKey: string;
-  project: string;
-  component: string;
-  handeling: string | null;
-  omgeving: string | null;
-  release: string | null;
-  issueUrl: string | null;
-  aantal: number;
-}
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 /**
  * Notify Slack with a single summary message when multiple repositories
  * transition to red in the same poll cycle.
@@ -530,72 +565,4 @@ export async function notifyAnomaly(
       "Afwijkingsmelding verstuurd",
     );
   return delivered;
-}
-
-export async function notifySentryDagbundel(
-  meldingen: SentryMelding[],
-): Promise<boolean> {
-  if (!isEnabled() || meldingen.length === 0) return false;
-  const webhookUrl = resolveWebhookUrl();
-  if (!webhookUrl) return false;
-  const payload = {
-    text: `Dagbericht foutmonitoring: ${meldingen.length} actieve fouten`,
-    blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*Dagbericht foutmonitoring — ${meldingen.length} actieve fouten*`,
-        },
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: meldingen.slice(0, 30).map(sentryRegel).join("\n"),
-        },
-      },
-    ],
-  };
-  return post(webhookUrl, payload);
-}
-
-/**
- * Dit is bewust een beheercentrummelding: Sentry kent het Slack-kanaal niet
- * en bepaalt evenmin het tijdstip of de urgentie.
- */
-export async function notifySentryDirect(
-  melding: SentryMelding,
-): Promise<boolean> {
-  if (!isEnabled()) return false;
-  const webhookUrl = resolveWebhookUrl();
-  if (!webhookUrl) return false;
-  const payload = {
-    text: `Directe foutblokkade in ${melding.project}`,
-    blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*Directe foutblokkade*\n${sentryRegel(melding)}`,
-        },
-      },
-    ],
-  };
-  return post(webhookUrl, payload);
-}
-
-function sentryRegel(melding: SentryMelding): string {
-  const context = [
-    melding.component,
-    melding.omgeving,
-    melding.release ? `release ${melding.release}` : null,
-    `${melding.aantal}×`,
-  ]
-    .filter((waarde): waarde is string => Boolean(waarde))
-    .join(" · ");
-  const issue = melding.issueUrl
-    ? `<${melding.issueUrl}|${melding.project} / ${melding.issueKey}>`
-    : `${melding.project} / ${melding.issueKey}`;
-  return `• ${issue} — ${melding.handeling ?? "overige handeling"} _(${context})_`;
 }

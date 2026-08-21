@@ -41,8 +41,9 @@ Alleen deze labels zijn direct:
 - `POST:/api/facturen/:id/verzenden-klant`
 - `POST:/api/betaalbatches/:id/bevestigen`
 
-Ieder ander of ontbrekend label gaat naar het dagbericht. De bronapplicaties
-leveren alleen labels; zij leveren geen urgentie mee.
+Ieder ander of ontbrekend label wordt als centrale bevinding in het ene
+dagbericht opgenomen. De bronapplicaties leveren alleen labels; zij leveren
+geen urgentie mee.
 
 Een direct label is pas vertrouwd wanneer project, component, productieomgeving
 én de API-HMAC over verwijzingscode plus label kloppen. Een clientevent uit een
@@ -52,14 +53,14 @@ publiek web- of mobiel project kan daardoor nooit een directe melding forceren.
 
 Alle tijden worden in `Europe/Amsterdam` berekend:
 
-- direct op werkdagen vanaf 07:15 tot 17:00;
-- direct in het weekend vanaf 09:00 tot 17:00;
-- overige actieve, herhaalde issues gebundeld om 17:00;
-- buiten deze vensters geen melding.
+- vertrouwde directe issues volgen de centrale stille uren van het
+  beheercentrum;
+- overige actieve, herhaalde issues staan in het ene werkdagbericht rond 17:00;
+- Sentry verstuurt nooit een eigen tweede dagbundel.
 
-De router loopt iedere minuut, gebruikt een PostgreSQL advisory lock tegen
-dubbele uitvoering en markeert een issue pas als gemeld nadat het bestaande
-beheercentrumkanaal de melding heeft geaccepteerd.
+De webhook claimt iedere event-id atomair en schrijft vanaf het tweede
+voorkomen een idempotente centrale bevinding. De bestaande findings-laag
+regelt daarna timing, stille uren, kanaalfanout en het precies-één-dagbericht.
 
 ## Sentry-inrichting
 

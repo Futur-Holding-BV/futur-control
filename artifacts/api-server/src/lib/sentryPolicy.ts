@@ -19,50 +19,6 @@ export function classificeerSentryHandeling(
     : "dagbundel";
 }
 
-interface AmsterdamTijd {
-  weekdag: string;
-  uur: number;
-  minuut: number;
-}
-
-function amsterdamTijd(op: Date): AmsterdamTijd {
-  const delen = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Amsterdam",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(op);
-  const waarde = (type: Intl.DateTimeFormatPartTypes): string =>
-    delen.find((deel) => deel.type === type)?.value ?? "";
-  return {
-    weekdag: waarde("weekday"),
-    uur: Number(waarde("hour")),
-    minuut: Number(waarde("minute")),
-  };
-}
-
-/**
- * Direct betekent: de eerstvolgende monitortik binnen het bestaande
- * beheercentrumvenster. Buiten dit venster blijft de fout in de wachtrij.
- */
-export function magDirectMelden(op: Date): boolean {
-  const tijd = amsterdamTijd(op);
-  const weekend = tijd.weekdag === "Sat" || tijd.weekdag === "Sun";
-  const openingInMinuten = weekend ? 9 * 60 : 7 * 60 + 15;
-  const nuInMinuten = tijd.uur * 60 + tijd.minuut;
-  return nuInMinuten >= openingInMinuten && nuInMinuten < 17 * 60;
-}
-
-/**
- * De monitor loopt iedere minuut. Een marge van vijf minuten voorkomt dat een
- * korte eventloopvertraging de complete dagbundel overslaat.
- */
-export function isDagbundelMoment(op: Date): boolean {
-  const tijd = amsterdamTijd(op);
-  return tijd.uur === 17 && tijd.minuut >= 0 && tijd.minuut < 5;
-}
-
 function veiligKenmerk(waarde: unknown, max = 120): string | null {
   if (typeof waarde !== "string") return null;
   const schoon = waarde.trim();

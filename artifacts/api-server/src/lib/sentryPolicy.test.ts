@@ -2,11 +2,9 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   classificeerSentryHandeling,
-  isDagbundelMoment,
   isVertrouwdeDirecteSentryMelding,
   leesOpgelostIssueKey,
   leesVeiligSentrySignaal,
-  magDirectMelden,
 } from "./sentryPolicy.js";
 
 describe("classificeerSentryHandeling", () => {
@@ -30,27 +28,6 @@ describe("classificeerSentryHandeling", () => {
     "overig",
   ])("bundelt iedere andere handeling: %s", (handeling) => {
     expect(classificeerSentryHandeling(handeling)).toBe("dagbundel");
-  });
-});
-
-describe("beheercentrumvensters in Europe/Amsterdam", () => {
-  it("opent werkdagen om 07:15 en sluit om 17:00", () => {
-    expect(magDirectMelden(new Date("2026-08-20T05:14:00Z"))).toBe(false);
-    expect(magDirectMelden(new Date("2026-08-20T05:15:00Z"))).toBe(true);
-    expect(magDirectMelden(new Date("2026-08-20T14:59:00Z"))).toBe(true);
-    expect(magDirectMelden(new Date("2026-08-20T15:00:00Z"))).toBe(false);
-  });
-
-  it("opent in het weekend om 09:00", () => {
-    expect(magDirectMelden(new Date("2026-08-22T06:59:00Z"))).toBe(false);
-    expect(magDirectMelden(new Date("2026-08-22T07:00:00Z"))).toBe(true);
-  });
-
-  it("bundelt alleen in de vijfminutenmarge vanaf 17:00", () => {
-    expect(isDagbundelMoment(new Date("2026-08-20T14:59:00Z"))).toBe(false);
-    expect(isDagbundelMoment(new Date("2026-08-20T15:00:00Z"))).toBe(true);
-    expect(isDagbundelMoment(new Date("2026-08-20T15:04:00Z"))).toBe(true);
-    expect(isDagbundelMoment(new Date("2026-08-20T15:05:00Z"))).toBe(false);
   });
 });
 
