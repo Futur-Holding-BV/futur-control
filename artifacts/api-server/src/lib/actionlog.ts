@@ -4,7 +4,7 @@
  */
 
 import { db, actionLog, pool } from "@workspace/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, like, or } from "drizzle-orm";
 import { logger } from "./logger.js";
 
 export interface LogActionInput {
@@ -80,7 +80,10 @@ export async function findAutoRetry(
         and(
           eq(actionLog.kind, "auto_retry"),
           eq(actionLog.repo, repo),
-          eq(actionLog.runId, String(runId)),
+          or(
+            eq(actionLog.runId, String(runId)),
+            like(actionLog.runId, `${runId}:attempt:%`),
+          ),
         ),
       )
       .orderBy(desc(actionLog.id))

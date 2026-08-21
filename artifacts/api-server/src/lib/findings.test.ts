@@ -65,6 +65,7 @@ beforeEach(() => {
   vi.mocked(notifyFinding).mockReset();
   vi.mocked(notifyDailyFindings).mockReset();
   vi.stubGlobal("fetch", vi.fn());
+  delete process.env.CONNECT_STATUS_URL;
 });
 
 afterEach(() => {
@@ -175,6 +176,7 @@ describe("17:00 workday report", () => {
       .mockResolvedValueOnce({ rows: [{ value: "2026-08-17" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [waiting] })
       .mockResolvedValueOnce({ rows: [{ id: 7, action: "Controle herhaald", repo: "api", outcome: "geslaagd" }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
@@ -182,9 +184,12 @@ describe("17:00 workday report", () => {
     await deliverDailyReport(new Date("2026-08-17T15:00:00Z"));
 
     expect(notifyDailyFindings).toHaveBeenCalledWith(
-      [{ title: waiting.title, detail: waiting.detail }],
+      [{ title: waiting.title, detail: waiting.detail, kind: waiting.kind }],
       [{ action: "Controle herhaald", repo: "api", outcome: "geslaagd" }],
       "2026-08-17",
+      expect.arrayContaining([
+        expect.objectContaining({ id: "connect:production", status: "unknown" }),
+      ]),
     );
     expect(markActionsReported).toHaveBeenCalledWith([7]);
   });
@@ -200,7 +205,12 @@ describe("17:00 workday report", () => {
 
     await deliverDailyReport(new Date("2026-08-18T15:00:00Z"));
 
-    expect(notifyDailyFindings).toHaveBeenCalledWith([], [], "2026-08-18");
+    expect(notifyDailyFindings).toHaveBeenCalledWith(
+      [],
+      [],
+      "2026-08-18",
+      expect.any(Array),
+    );
     expect(query.mock.calls.map((call) => String(call[0])).join("\n"))
       .toContain("daily-report-first-due");
   });
@@ -219,6 +229,7 @@ describe("17:00 workday report", () => {
       .mockResolvedValueOnce({ rows: [{ value: "2026-08-18" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [action] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     vi.mocked(notifyDailyFindings).mockResolvedValue({ handled: true, confirmed: true });
 
@@ -228,6 +239,7 @@ describe("17:00 workday report", () => {
       [],
       [{ action: action.action, repo: action.repo, outcome: action.outcome }],
       "2026-08-18",
+      expect.any(Array),
     );
     expect(markActionsReported).toHaveBeenCalledWith([8]);
   });
@@ -266,7 +278,12 @@ describe("17:00 workday report", () => {
     // 17:00 CET on a Monday; the same instant is only 16:00 UTC.
     await deliverDailyReport(new Date("2026-01-19T16:00:00Z"));
 
-    expect(notifyDailyFindings).toHaveBeenCalledWith([], [], "2026-01-19");
+    expect(notifyDailyFindings).toHaveBeenCalledWith(
+      [],
+      [],
+      "2026-01-19",
+      expect.any(Array),
+    );
   });
 
   it("lets only one concurrent process claim a day's report", async () => {
@@ -294,6 +311,21 @@ describe("17:00 workday report", () => {
 });
 
 describe("availability debounce and editable levels", () => {
+  it("neemt de Connect-productiehost automatisch mee in de dienstbewaking", async () => {
+    process.env.EXPIRY_TLS_HOSTS = "";
+    process.env.CONNECT_STATUS_URL =
+      "https://connect.example/api/beheerstatus";
+    vi.mocked(fetch).mockResolvedValue(new Response("", { status: 200 }));
+    query.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    await checkPublicServices(new Date("2026-08-20T08:00:00Z"));
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://connect.example",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it("does not create a finding for a service that recovers after three minutes", async () => {
     process.env.EXPIRY_TLS_HOSTS = "site.example";
     vi.mocked(fetch)

@@ -8,9 +8,16 @@
 import { pool } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 import { amsterdamParts, isQuietTime } from "./quiet.js";
-import { notifyFinding, notifyDailyFindings } from "./notifications.js";
+import {
+  notifyFinding,
+  notifyDailyFindings,
+} from "./notifications.js";
 import { logAction, markActionsReported } from "./actionlog.js";
 import { logger } from "./logger.js";
+import {
+  unknownConnectChecks,
+  type ConnectCheck,
+} from "./connectCheckModel.js";
 import {
   listExpiryItems,
   listTlsExpiryItems,
@@ -67,6 +74,14 @@ const FALLBACK_LEVELS: Record<string, FindingLevel> = {
   anomaly: "KAN_WACHTEN",
   domain_expiry: "KAN_WACHTEN",
   repo_without_check: "KAN_WACHTEN",
+  repo_coverage_limited: "KAN_WACHTEN",
+  sentry_direct: "NU",
+  sentry_error: "KAN_WACHTEN",
+  connect_status_unavailable: "KAN_WACHTEN",
+  deployment_mismatch: "KAN_WACHTEN",
+  backup_stale: "KAN_WACHTEN",
+  nas_stale: "KAN_WACHTEN",
+  mail_inactive: "KAN_WACHTEN",
 };
 
 const IMMEDIATE_DELIVERY_LOCK = "6839201476";
@@ -298,7 +313,7 @@ export async function deliverDailyReport(now = new Date()): Promise<void> {
       `SELECT id, kind, subject, title, detail, level, opened_at, resolved_at,
               auto_resolved, immediate_sent_at
          FROM findings
-        WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'
+        WHERE resolved_at IS NULL AND auto_resolved = false
         ORDER BY opened_at`,
     );
     const actions = await pool.query<{
@@ -312,17 +327,46 @@ export async function deliverDailyReport(now = new Date()): Promise<void> {
           AND kind IN ('auto_retry', 'auto_restart', 'manual_rerun')
         ORDER BY created_at`,
     );
+    const operationalState = await pool.query<{ value: string }>(
+      "SELECT value FROM monitor_state WHERE key = 'connect:status:checks'",
+    );
+    let operationalChecks: ConnectCheck[] = unknownConnectChecks();
+    try {
+      const parsed = JSON.parse(operationalState.rows[0]?.value ?? "");
+      if (
+        Array.isArray(parsed)
+        && parsed.length === 5
+        && parsed.every(
+          (check) =>
+            check
+            && typeof check === "object"
+            && typeof check.id === "string"
+            && typeof check.label === "string"
+            && ["ok", "warning", "error", "unknown"].includes(check.status)
+            && typeof check.detail === "string",
+        )
+      ) {
+        operationalChecks = parsed as ConnectCheck[];
+      }
+    } catch {
+      // De vaste onbekend-resultaten houden het dagbericht exact vijfledig.
+    }
     const delivery = await notifyDailyFindings(
-      rows.rows.map((r) => ({ title: r.title, detail: r.detail })),
+      rows.rows.map((r) => ({
+        title: r.title,
+        detail: r.detail,
+        kind: r.kind,
+      })),
       actions.rows.map(({ action, repo, outcome }) => ({ action, repo, outcome })),
       day,
+      operationalChecks,
     );
     deliveryHandled = delivery.handled;
     if (delivery.handled) {
       await markActionsReported(actions.rows.map((action) => action.id));
       await pool.query(
         `UPDATE findings SET daily_sent_on = $1, updated_at = now()
-         WHERE resolved_at IS NULL AND auto_resolved = false AND level = 'KAN_WACHTEN'`,
+         WHERE resolved_at IS NULL AND auto_resolved = false`,
         [day],
       );
     }
@@ -480,8 +524,18 @@ async function probeHttps(entry: string): Promise<HttpsProbeResult> {
 
 /** Check public HTTPS hosts; a finding only opens after three failed polls. */
 export async function checkPublicServices(now = new Date()): Promise<void> {
-  const hosts = (process.env.EXPIRY_TLS_HOSTS ?? "")
-    .split(",").map((host) => host.trim()).filter(Boolean);
+  const hosts = new Set(
+    (process.env.EXPIRY_TLS_HOSTS ?? "")
+      .split(",")
+      .map((host) => host.trim())
+      .filter(Boolean),
+  );
+  try {
+    const connectUrl = new URL(process.env.CONNECT_STATUS_URL ?? "");
+    if (connectUrl.protocol === "https:") hosts.add(connectUrl.host);
+  } catch {
+    // De Connect-contractcontrole maakt een ongeldige configuratie zichtbaar.
+  }
   for (const entry of hosts) {
     const host = entry.split(":")[0]!;
     const stateKey = `availability:${entry}`;

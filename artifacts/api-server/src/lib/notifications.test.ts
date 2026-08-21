@@ -152,13 +152,28 @@ describe("daily report wording", () => {
   it("confirms that monitoring is running when no findings are open", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(okResponse());
 
-    const delivery = await notifyDailyFindings([], [], "2026-08-18");
+    const delivery = await notifyDailyFindings(
+      [],
+      [],
+      "2026-08-18",
+      [
+        { id: "1", label: "Connect productie", status: "ok", detail: "Bereikbaar." },
+        { id: "2", label: "Connect bouwcontrole", status: "ok", detail: "Groen." },
+        { id: "3", label: "Connect databaseback-up", status: "ok", detail: "Recent." },
+        { id: "4", label: "Connect NAS-synchronisatie", status: "ok", detail: "Recent." },
+        { id: "5", label: "Connect uitgaande mail", status: "ok", detail: "Recent." },
+      ],
+    );
 
     const [, init] = fetchSpy.mock.calls[0]!;
     const payload = JSON.parse((init as RequestInit).body as string) as { text: string };
     expect(payload.text).toContain("Dagbericht 2026-08-18: bewaking draait");
-    expect(payload.text).toContain("De bewaking draait");
-    expect(payload.text).toContain("geen open aandachtspunten");
+    expect(payload.text).toContain("Open punten:");
+    expect(payload.text).toContain("Geen open aandachtspunten");
+    expect(payload.text).toContain("Zelf opgelost werk:");
+    expect(payload.text).toContain("Verloop binnen 30 dagen:");
+    expect(payload.text).toContain("Vijf operationele controles:");
+    expect((payload.text.match(/^• OK — Connect /gm) ?? [])).toHaveLength(5);
     expect(delivery).toEqual({ handled: true, confirmed: true });
   });
 });

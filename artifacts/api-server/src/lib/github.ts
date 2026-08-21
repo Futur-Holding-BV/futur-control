@@ -111,20 +111,75 @@ interface GhRepo {
  * automatically — including those added after the last deploy —
  * so the list never needs a code change.
  */
-export async function listMonitoredRepos(): Promise<string[]> {
+export interface MonitoredRepoSelection {
+  repos: string[];
+  orgRepos: string[];
+  overrideActive: boolean;
+  omittedByOverride: string[];
+  unknownInOverride: string[];
+}
+
+export async function getMonitoredRepoSelection(): Promise<MonitoredRepoSelection> {
+  const org = githubOrg();
+  const orgRepos = (
+    await ghJsonAll<GhRepo>(
+    `/orgs/${org}/repos?per_page=100&type=all&sort=pushed`,
+    )
+  ).map((repo) => repo.name);
   const envList = process.env.MONITORED_REPOS;
-  if (envList) {
-    return envList
-      .split(",")
-      .map((r) => r.trim())
-      .filter(Boolean);
+  if (!envList) {
+    return {
+      repos: orgRepos,
+      orgRepos,
+      overrideActive: false,
+      omittedByOverride: [],
+      unknownInOverride: [],
+    };
   }
 
-  const org = githubOrg();
-  const repos = await ghJsonAll<GhRepo>(
-    `/orgs/${org}/repos?per_page=100&type=all&sort=pushed`,
+  const requested = [
+    ...new Set(
+      envList
+        .split(",")
+        .map((repo) => repo.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const orgByLowerCase = new Map(
+    orgRepos.map((repo) => [repo.toLowerCase(), repo]),
   );
-  return repos.map((r) => r.name);
+  const requestedLowerCase = new Set(
+    requested.map((repo) => repo.toLowerCase()),
+  );
+  return {
+    repos: requested.map(
+      (repo) => orgByLowerCase.get(repo.toLowerCase()) ?? repo,
+    ),
+    orgRepos,
+    overrideActive: true,
+    omittedByOverride: orgRepos.filter(
+      (repo) => !requestedLowerCase.has(repo.toLowerCase()),
+    ),
+    unknownInOverride: requested.filter(
+      (repo) => !orgByLowerCase.has(repo.toLowerCase()),
+    ),
+  };
+}
+
+export async function listMonitoredRepos(): Promise<string[]> {
+  return (await getMonitoredRepoSelection()).repos;
+}
+
+export async function getDefaultBranchCommitSha(repo: string): Promise<string> {
+  const org = githubOrg();
+  const repoInfo = await ghJson<GhRepo>(`/repos/${org}/${repo}`);
+  const commit = await ghJson<{ sha: string }>(
+    `/repos/${org}/${repo}/commits/${encodeURIComponent(repoInfo.default_branch)}`,
+  );
+  if (!commit.sha) {
+    throw new Error(`Geen hoofdbranchcommit gevonden voor ${repo}`);
+  }
+  return commit.sha;
 }
 
 interface GhCommitListItem {

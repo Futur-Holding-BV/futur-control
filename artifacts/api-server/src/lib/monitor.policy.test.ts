@@ -33,7 +33,7 @@ vi.mock("./logger.js", () => ({
 }));
 
 vi.mock("./github.js", () => ({
-  listMonitoredRepos: vi.fn(),
+  getMonitoredRepoSelection: vi.fn(),
   repoSummary: vi.fn(),
 }));
 
@@ -66,9 +66,13 @@ vi.mock("./watchdog.js", () => ({
   recordSuccessfulMonitorRound: vi.fn(async () => undefined),
 }));
 
+vi.mock("./connectStatus.js", () => ({
+  syncConnectFindings: vi.fn(async () => undefined),
+}));
+
 import { pollAll } from "./monitor.js";
 import { db } from "@workspace/db";
-import { listMonitoredRepos, repoSummary } from "./github.js";
+import { getMonitoredRepoSelection, repoSummary } from "./github.js";
 import {
   notifyRepoRed,
   notifyMultipleReposRed,
@@ -79,6 +83,16 @@ import { openFinding } from "./findings.js";
 import type { RepoSummary } from "./github.js";
 
 const repoName = "fps-api";
+
+function monitoredSelection(repos: string[]) {
+  return {
+    repos,
+    orgRepos: repos,
+    overrideActive: false,
+    omittedByOverride: [],
+    unknownInOverride: [],
+  };
+}
 
 function makeSummary(overrides: Partial<RepoSummary> = {}): RepoSummary {
   return {
@@ -148,7 +162,9 @@ const MONDAY_0715_UTC = "2026-08-17T05:15:00Z"; // 07:15 Amsterdam (allowed)
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+  vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+    monitoredSelection([repoName]),
+  );
   vi.mocked(maybeAutoRetry).mockResolvedValue({
     holdNotification: false,
     escalationDetail: null,
@@ -234,7 +250,9 @@ describe("quiet window (Europe/Amsterdam)", () => {
 
   it("two problems still open at 07:15 become two waiting findings", async () => {
     const repos = ["repo-a", "repo-b"];
-    vi.mocked(listMonitoredRepos).mockResolvedValue(repos);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection(repos),
+    );
     vi.setSystemTime(new Date(MONDAY_0715_UTC));
     mockSnapshot({
       status: "red",

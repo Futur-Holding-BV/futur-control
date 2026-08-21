@@ -36,12 +36,9 @@ export async function ensureTablesExist(): Promise<void> {
         ADD COLUMN IF NOT EXISTS notified_status TEXT NOT NULL DEFAULT 'none'
     `);
 
-    // Remove the obsolete last_notified_at column if it still exists from an
-    // earlier schema version.  Safe because no application code reads it.
-    await client.query(`
-      ALTER TABLE repo_status_snapshots
-        DROP COLUMN IF EXISTS last_notified_at
-    `);
+    // Een oude last_notified_at-kolom mag blijven bestaan. Startup-migraties
+    // zijn uitsluitend additief, zodat een oudere release veilig kan blijven
+    // draaien of terugkeren terwijl de nieuwe release al actief is.
 
     // Additive column migration: tracks when the most recent red Slack
     // notification was delivered so reminder throttling survives restarts.
@@ -70,15 +67,9 @@ export async function ensureTablesExist(): Promise<void> {
         ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ
     `);
 
-    // Retry ownership now lives in self_heal_incidents. Multiple action-log
-    // rows are deliberately allowed so every individual attempt remains
-    // visible in the audit trail and the daily report.
-    await client.query(`
-      DROP INDEX IF EXISTS action_log_auto_retry_unique
-    `);
-    await client.query(`
-      DROP INDEX IF EXISTS action_log_auto_retry_attempt_unique
-    `);
+    // Retry ownership now lives in self_heal_incidents. Bestaande unieke
+    // action_log-indexen blijven voor rollbackcompatibiliteit intact; nieuwe
+    // pogingen gebruiken een poging-specifieke run_id.
 
     // Durable, atomic state for bounded automatic recovery. The primary key
     // is the incident claim: one GitHub run or one public service outage.
@@ -240,8 +231,70 @@ export async function ensureTablesExist(): Promise<void> {
         ('build_failed', 'KAN_WACHTEN', now()),
         ('anomaly', 'KAN_WACHTEN', now()),
         ('domain_expiry', 'KAN_WACHTEN', now()),
-        ('repo_without_check', 'KAN_WACHTEN', now())
+        ('repo_without_check', 'KAN_WACHTEN', now()),
+        ('repo_coverage_limited', 'KAN_WACHTEN', now()),
+        ('sentry_direct', 'NU', now()),
+        ('sentry_error', 'KAN_WACHTEN', now()),
+        ('connect_status_unavailable', 'KAN_WACHTEN', now()),
+        ('deployment_mismatch', 'KAN_WACHTEN', now()),
+        ('backup_stale', 'KAN_WACHTEN', now()),
+        ('nas_stale', 'KAN_WACHTEN', now()),
+        ('mail_inactive', 'KAN_WACHTEN', now())
       ON CONFLICT (kind) DO NOTHING
+    `);
+
+    // ── sentry_router_issues ────────────────────────────────────────────────
+    // Het beheercentrum bewaart alleen minimale routeringsmetadata. Twee
+    // voorkomens zijn vereist voordat een fout meldbaar wordt; een Sentry
+    // issue-resolve onderdrukt het signaal zolang er geen nieuwe regressie is.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sentry_router_issues (
+        issue_key          TEXT PRIMARY KEY,
+        project            TEXT NOT NULL,
+        component          TEXT NOT NULL DEFAULT 'onbekend',
+        handeling          TEXT,
+        omgeving           TEXT,
+        release            TEXT,
+        verwijzingscode    TEXT,
+        routing_bewijs     TEXT,
+        issue_url          TEXT,
+        aantal             INTEGER NOT NULL DEFAULT 1,
+        eerste_gezien_op   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        laatste_gezien_op  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        opgelost_op        TIMESTAMPTZ,
+        gemeld_op          TIMESTAMPTZ,
+        meld_claim_token   TEXT,
+        meld_claim_op      TIMESTAMPTZ
+      )
+    `);
+
+    await client.query(`
+      ALTER TABLE sentry_router_issues
+        ADD COLUMN IF NOT EXISTS verwijzingscode TEXT,
+        ADD COLUMN IF NOT EXISTS routing_bewijs TEXT,
+        ADD COLUMN IF NOT EXISTS meld_claim_token TEXT,
+        ADD COLUMN IF NOT EXISTS meld_claim_op TIMESTAMPTZ
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS sentry_router_open_idx
+        ON sentry_router_issues (laatste_gezien_op)
+        WHERE opgelost_op IS NULL AND gemeld_op IS NULL
+    `);
+
+    // Sentry levert webhooks at-least-once. De event-id is daarom de duurzame
+    // idempotentiesleutel: een retry mag nooit als tweede voorkomen tellen.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sentry_router_events (
+        event_key    TEXT PRIMARY KEY,
+        issue_key    TEXT NOT NULL,
+        ontvangen_op TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS sentry_router_events_ontvangen_idx
+        ON sentry_router_events (ontvangen_op)
     `);
   } finally {
     client.release();

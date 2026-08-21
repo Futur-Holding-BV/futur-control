@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   dispatchRestartWorkflow,
   findRestartWorkflow,
+  getMonitoredRepoSelection,
   listMonitoredRepos,
   loadWorkflowRunDefinition,
   parseLinkNext,
@@ -71,14 +72,32 @@ describe("listMonitoredRepos", () => {
     process.env = { ...originalEnv };
   });
 
-  it("uses the MONITORED_REPOS env var when set, without calling fetch", async () => {
+  it("uses MONITORED_REPOS but makes omitted org repositories visible", async () => {
     process.env.MONITORED_REPOS = " Repo-A , Repo-B , Repo-C ";
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockFetchPage([
+        makeRepo("Repo-A"),
+        makeRepo("Repo-B"),
+        makeRepo("FPS-Finance"),
+        makeRepo("FPS-Archief"),
+        makeRepo("FPS-Connect"),
+        makeRepo("Koersa"),
+        makeRepo("beheercentrum"),
+      ]),
+    );
 
-    const repos = await listMonitoredRepos();
+    const selection = await getMonitoredRepoSelection();
 
-    expect(repos).toEqual(["Repo-A", "Repo-B", "Repo-C"]);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(selection.repos).toEqual(["Repo-A", "Repo-B", "Repo-C"]);
+    expect(selection.omittedByOverride).toEqual([
+      "FPS-Finance",
+      "FPS-Archief",
+      "FPS-Connect",
+      "Koersa",
+      "beheercentrum",
+    ]);
+    expect(selection.unknownInOverride).toEqual(["Repo-C"]);
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
   it("fetches a single page of org repos when no Link header is present", async () => {
@@ -108,6 +127,47 @@ describe("listMonitoredRepos", () => {
 
     expect(repos).toEqual(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("discovers current and future organisation repositories without an override", async () => {
+    const page1 = [
+      makeRepo("FPS-Finance"),
+      makeRepo("FPS-Archief"),
+      makeRepo("FPS-Connect"),
+    ];
+    const page2 = [
+      makeRepo("Koersa"),
+      makeRepo("beheercentrum"),
+      makeRepo("Toekomstige-Codebase"),
+    ];
+    const page2Url = "https://api.github.com/orgs/fps-test-org/repos?page=2&per_page=100";
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(mockFetchPage(page1, page2Url))
+      .mockResolvedValueOnce(mockFetchPage(page2));
+
+    const selection = await getMonitoredRepoSelection();
+
+    expect(selection).toEqual({
+      repos: [
+        "FPS-Finance",
+        "FPS-Archief",
+        "FPS-Connect",
+        "Koersa",
+        "beheercentrum",
+        "Toekomstige-Codebase",
+      ],
+      orgRepos: [
+        "FPS-Finance",
+        "FPS-Archief",
+        "FPS-Connect",
+        "Koersa",
+        "beheercentrum",
+        "Toekomstige-Codebase",
+      ],
+      overrideActive: false,
+      omittedByOverride: [],
+      unknownInOverride: [],
+    });
   });
 
   it("passes the correct Authorization header on every page request", async () => {

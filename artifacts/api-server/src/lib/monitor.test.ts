@@ -7,7 +7,7 @@
  *
  * All external dependencies are mocked:
  *   @workspace/db   → pool + db  (no real database)
- *   ./github.js     → listMonitoredRepos / repoSummary  (no real GitHub calls)
+ *   ./github.js     → getMonitoredRepoSelection / repoSummary  (no real GitHub calls)
  *   ./notifications.js → notifyRepoRed / notifyMultipleReposRed / notifyAnomaly
  *                        notifyRepoRedReminder / notifyMultipleReposRedReminder
  *   ./selfheal.js   → maybeAutoRetry / settleRecovery
@@ -47,7 +47,7 @@ vi.mock("./logger.js", () => ({
 }));
 
 vi.mock("./github.js", () => ({
-  listMonitoredRepos: vi.fn(),
+  getMonitoredRepoSelection: vi.fn(),
   repoSummary: vi.fn(),
 }));
 
@@ -80,13 +80,17 @@ vi.mock("./watchdog.js", () => ({
   recordSuccessfulMonitorRound: vi.fn(async () => undefined),
 }));
 
+vi.mock("./connectStatus.js", () => ({
+  syncConnectFindings: vi.fn(async () => undefined),
+}));
+
 // ---------------------------------------------------------------------------
 // Imports (after mocks so the mocked versions are used)
 // ---------------------------------------------------------------------------
 
 import { gatherRepoData, pollAll } from "./monitor.js";
 import { db } from "@workspace/db";
-import { listMonitoredRepos, repoSummary } from "./github.js";
+import { getMonitoredRepoSelection, repoSummary } from "./github.js";
 import {
   notifyRepoRed,
   notifyMultipleReposRed,
@@ -94,7 +98,8 @@ import {
   notifyAnomaly,
 } from "./notifications.js";
 import { maybeAutoRetry } from "./selfheal.js";
-import { openFinding } from "./findings.js";
+import { openFinding, resolveFinding } from "./findings.js";
+import { syncConnectFindings } from "./connectStatus.js";
 import type { RepoSummary, Anomaly } from "./github.js";
 
 // ---------------------------------------------------------------------------
@@ -102,6 +107,16 @@ import type { RepoSummary, Anomaly } from "./github.js";
 // ---------------------------------------------------------------------------
 
 const repoName = "fps-api";
+
+function monitoredSelection(repos: string[]) {
+  return {
+    repos,
+    orgRepos: repos,
+    overrideActive: false,
+    omittedByOverride: [],
+    unknownInOverride: [],
+  };
+}
 
 function makeSummary(overrides: Partial<RepoSummary> = {}): RepoSummary {
   return {
@@ -185,7 +200,9 @@ describe("pollAll — anomaly notification", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-17T10:00:00Z")); // Monday 12:00 Amsterdam
-    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection([repoName]),
+    );
     vi.mocked(maybeAutoRetry).mockResolvedValue({
       holdNotification: false,
       escalationDetail: null,
@@ -269,7 +286,9 @@ describe("pollAll — anomaly notification", () => {
 
 describe("pollAll — GitHub error handling", () => {
   beforeEach(() => {
-    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection([repoName]),
+    );
   });
 
   afterEach(() => {
@@ -292,7 +311,9 @@ describe("pollAll — full repo coverage", () => {
   const repos = ["repo-alpha", "repo-beta", "repo-gamma"];
 
   beforeEach(() => {
-    vi.mocked(listMonitoredRepos).mockResolvedValue(repos);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection(repos),
+    );
     vi.mocked(maybeAutoRetry).mockResolvedValue({
       holdNotification: false,
       escalationDetail: null,
@@ -350,6 +371,78 @@ describe("pollAll — full repo coverage", () => {
   });
 });
 
+describe("pollAll — organisatie- en Connect-dekking", () => {
+  beforeEach(() => {
+    vi.mocked(maybeAutoRetry).mockResolvedValue({
+      holdNotification: false,
+      escalationDetail: null,
+    });
+    vi.mocked(repoSummary).mockResolvedValue(
+      makeSummary({ name: "FPS-Connect", status: "green" }),
+    );
+    mockSnapshot(null);
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("maakt een beperkende repository-override zichtbaar", async () => {
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue({
+      repos: ["FPS-Connect"],
+      orgRepos: ["FPS-Connect", "FPS-Finance", "Koersa"],
+      overrideActive: true,
+      omittedByOverride: ["FPS-Finance", "Koersa"],
+      unknownInOverride: [],
+    });
+
+    await pollAll();
+
+    expect(openFinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "org:repository-coverage-limited",
+        kind: "repo_coverage_limited",
+        detail: expect.stringContaining("FPS-Finance"),
+      }),
+    );
+  });
+
+  it("sluit de overridebevinding bij volledige organisatiedekking", async () => {
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection(["FPS-Connect"]),
+    );
+
+    await pollAll();
+
+    expect(resolveFinding).toHaveBeenCalledWith(
+      "org:repository-coverage-limited",
+    );
+  });
+
+  it("geeft de gemeten Connect-bouwstatus door aan de vijf controles", async () => {
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection(["FPS-Connect"]),
+    );
+    const problemSince = new Date("2026-08-19T08:00:00Z");
+    vi.mocked(repoSummary).mockResolvedValue(
+      makeSummary({ name: "FPS-Connect", status: "red" }),
+    );
+    mockSnapshot({
+      status: "red",
+      notifiedStatus: "red",
+      notifiedAnomalySha: null,
+      problemSince,
+    });
+
+    await pollAll();
+
+    expect(syncConnectFindings).toHaveBeenCalledWith({
+      repoStatus: "red",
+      problemSinceMs: problemSince.getTime(),
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Tests: pollAll — DB write failure in saveSnapshot is swallowed
 // ---------------------------------------------------------------------------
@@ -359,7 +452,9 @@ describe("pollAll — saveSnapshot failure handling", () => {
     vi.useRealTimers();
   });
   beforeEach(() => {
-    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection([repoName]),
+    );
     vi.mocked(maybeAutoRetry).mockResolvedValue({
       holdNotification: false,
       escalationDetail: null,
@@ -446,7 +541,7 @@ describe("pollAll — advisory lock not acquired", () => {
 
     await pollAll();
 
-    expect(listMonitoredRepos).not.toHaveBeenCalled();
+    expect(getMonitoredRepoSelection).not.toHaveBeenCalled();
     expect(repoSummary).not.toHaveBeenCalled();
   });
 
@@ -472,7 +567,9 @@ describe("pollAll — staleness-red notification", () => {
     vi.useFakeTimers();
     // Monday 2026-08-17 12:00 Amsterdam (10:00 UTC) — outside the quiet window.
     vi.setSystemTime(new Date("2026-08-17T10:00:00Z"));
-    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection([repoName]),
+    );
     vi.mocked(maybeAutoRetry).mockResolvedValue({
       holdNotification: false,
       escalationDetail: null,
@@ -539,7 +636,9 @@ describe("pollAll — staleness-red notification", () => {
 
     // ── Cycle 2: new commit → yellow (still stale but under the red threshold)
     //    Recovery branch fires because yellow is not a problem status.
-    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection([repoName]),
+    );
     vi.mocked(maybeAutoRetry).mockResolvedValue({
       holdNotification: false,
       escalationDetail: null,
@@ -571,7 +670,9 @@ describe("pollAll — staleness-red notification", () => {
     vi.resetAllMocks();
 
     // ── Cycle 3: repo goes stale-red again → must re-alert ──────────────────
-    vi.mocked(listMonitoredRepos).mockResolvedValue([repoName]);
+    vi.mocked(getMonitoredRepoSelection).mockResolvedValue(
+      monitoredSelection([repoName]),
+    );
     vi.mocked(maybeAutoRetry).mockResolvedValue({
       holdNotification: false,
       escalationDetail: null,

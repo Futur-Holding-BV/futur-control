@@ -9,6 +9,7 @@ import { ensureTablesExist } from "@workspace/db";
 import { cleanupExpiredLoginAttempts } from "./lib/auth";
 import { startWatchdog } from "./lib/watchdog";
 import { startDailyReportScheduler } from "./lib/findings";
+import type { SentryWebhookRequest } from "./routes/sentry.js";
 
 const app: Express = express();
 
@@ -31,7 +32,15 @@ app.use(
 );
 app.use(cors());
 app.use(cookieParser());
-app.use(express.json());
+app.use(
+  express.json({
+    verify(req, _res, buffer) {
+      if (req.url?.split("?")[0] === "/api/webhooks/sentry") {
+        (req as SentryWebhookRequest).rawBody = Buffer.from(buffer);
+      }
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);

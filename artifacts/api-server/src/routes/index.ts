@@ -7,6 +7,7 @@ import expiryRouter from "./expiry";
 import actionsRouter from "./actions";
 import pushRouter from "./push";
 import { externPublicRouter, externAdminRouter } from "./extern";
+import sentryRouter from "./sentry";
 import { requireAuth } from "../lib/auth.js";
 
 const router: IRouter = Router();
@@ -16,6 +17,7 @@ router.use(healthRouter);
 router.use(authRouter);
 // Public but guarded by its own read-only key (Connect status block).
 router.use(externPublicRouter);
+router.use(sentryRouter);
 router.use(requireAuth);
 router.use(reposRouter);
 router.use(notificationsRouter);
